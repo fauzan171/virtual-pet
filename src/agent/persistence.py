@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 
@@ -36,6 +37,12 @@ class JsonAgentPersistence:
 
     def save_session(self, session: AgentSessionState) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            shutil.copy2(self.path, self.backup_path)
         payload = asdict(session)
         payload["version"] = 1
         self.path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    @property
+    def backup_path(self) -> Path:
+        return self.path.with_suffix(f"{self.path.suffix}.bak")

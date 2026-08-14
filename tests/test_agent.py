@@ -113,6 +113,18 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(reloaded.memory.user_name, "Jadi")
             self.assertGreater(reloaded.turn_count, 0)
 
+    def test_json_persistence_writes_backup_after_second_save(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "pet.json"
+            persistence = JsonAgentPersistence(path)
+            session = persistence.load_session()
+            session.memory.user_name = "Jadi"
+            persistence.save_session(session)
+            session.memory.favorite_color = "biru"
+            persistence.save_session(session)
+
+            self.assertTrue(persistence.backup_path.exists())
+
     def test_remote_planner_parses_action_plan(self) -> None:
         payload = {
             "choices": [

@@ -21,7 +21,7 @@ from src.brain.hermes_bridge import HermesBridgeBrain
 from src.brain.local_brain import LocalPetBrain
 from src.brain.openai_brain import OpenAIPetBrain
 from src.brain.remote_bridge import RemoteBridgeBrain
-from src.core.models import InteractionEvent
+from src.core.models import InteractionEvent, PetContext
 from src.core.state_machine import HoloPetStateMachine
 from src.cv.tracker import GestureTracker
 from src.render.renderer import HoloPetRenderer
@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--utterance", action="append", default=[], help="Inject a dialogue utterance during self-test.")
     parser.add_argument("--dialogue-stdin", action="store_true", help="Poll terminal stdin for dialogue while the camera demo is running.")
     parser.add_argument("--dialogue-script", action="append", default=[], help="Queue scripted dialogue lines during the live camera demo.")
+    parser.add_argument("--probe-remote", action="store_true", help="Run a remote dialogue probe without camera mode.")
     return parser.parse_args()
 
 
@@ -80,6 +81,29 @@ def run_self_test(config: dict, brain_name: str, memory_path: str, utterances: l
         for result in dialog_loop.run_self_test(context=context, utterances=scripted):
             print(f"dialog_self -> {result.utterance} => {result.plan.reply} | src={result.plan.response_source} | {result.memory_summary}")
     print("self-test complete")
+    return 0
+
+
+def run_remote_probe(brain_name: str, memory_path: str, utterances: list[str]) -> int:
+    brain = build_brain(brain_name, memory_path)
+    if not isinstance(brain, (HermesBridgeBrain, RemoteBridgeBrain)):
+        print("error: probe mode requires a planner-backed brain such as remote or hermes")
+        return 1
+    context = PetContext(
+        state="happy",
+        mood="joyful",
+        bond=3,
+        energy=0.72,
+        interaction_count=5,
+        last_event="smile",
+        memory_summary="empty",
+        tracking_confidence=1.0,
+    )
+    dialog_loop = brain.build_dialog_loop(tts=NullTextToSpeech())
+    scripted = utterances or ["Namaku Jadi", "ke bahu kanan", "namaku siapa"]
+    print(f"remote_probe brain={brain.provider_name}")
+    for result in dialog_loop.run_self_test(context=context, utterances=scripted):
+        print(f"probe -> {result.utterance} => {result.plan.reply} | src={result.plan.response_source} | move={result.plan.movement.target_anchor}")
     return 0
 
 
@@ -168,6 +192,8 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
 def main() -> int:
     args = parse_args()
     config = load_config()
+    if args.probe_remote:
+        return run_remote_probe(args.brain, args.memory_path, args.utterance)
     if args.self_test:
         return run_self_test(config, args.brain, args.memory_path, args.utterance)
     return run_camera_demo(args, config)
