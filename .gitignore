@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 
 data/pet_memory.json
+data/pet_memory.json.bak
