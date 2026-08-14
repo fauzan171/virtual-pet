@@ -16,9 +16,9 @@ os.environ.setdefault("XDG_CACHE_HOME", str(PROJECT_ROOT / ".cache"))
 import cv2
 import yaml
 
-from src.audio.listener import AudioCapture, MockMicrophoneListener, StdinMicrophoneListener
+from src.audio.listener import AudioCapture, MockMicrophoneListener, SoundDeviceMicrophoneListener, StdinMicrophoneListener
 from src.audio.player import VoicePlayer
-from src.audio.tts import NullTextToSpeech
+from src.audio.tts import MacOSSayTextToSpeech, NullTextToSpeech
 from src.brain.hermes_bridge import HermesBridgeBrain
 from src.brain.local_brain import LocalPetBrain
 from src.brain.openai_brain import OpenAIPetBrain
@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dialogue-script", action="append", default=[], help="Queue scripted dialogue lines during the live camera demo.")
     parser.add_argument("--probe-remote", action="store_true", help="Run a remote dialogue probe without camera mode.")
     parser.add_argument("--skin", default=None, help="Pet character skin: fox, cat, or bunny. Overrides render.skin in the config.")
+    parser.add_argument("--mic", action="store_true", help="Listen to the microphone and transcribe speech locally with Whisper.")
+    parser.add_argument("--whisper-model", default="base", help="faster-whisper model size when --mic is set (tiny, base, small).")
     return parser.parse_args()
 
 
@@ -118,6 +120,23 @@ def run_remote_probe(brain_name: str, memory_path: str, utterances: list[str]) -
     return 0
 
 
+def build_voice_input(whisper_model_name: str):
+    """Create a microphone listener plus local Whisper STT; either may fail gracefully."""
+    try:
+        listener = SoundDeviceMicrophoneListener()
+    except Exception as error:
+        print(f"warning: microphone unavailable ({error})")
+        return None, None
+    try:
+        from src.audio.stt import WhisperSpeechToText
+
+        stt = WhisperSpeechToText(model_name=whisper_model_name)
+    except Exception as error:
+        print(f"warning: whisper unavailable ({error}); mic input will not be transcribed")
+        stt = None
+    return listener, stt
+
+
 def open_camera(index: int, config: dict) -> cv2.VideoCapture:
     cap = cv2.VideoCapture(index)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, config["camera"]["width"])
@@ -166,7 +185,19 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
         elif args.dialogue_stdin:
             dialogue_listener = StdinMicrophoneListener()
             print("dialogue mode: type a line in the terminal and press enter")
-        if dialogue_listener is not None:
+        elif args.mic:
+            dialogue_listener, stt = build_voice_input(args.whisper_model)
+            if dialogue_listener is not None:
+                print("dialogue mode: speak near the microphone; pauses end a turn")
+                dialogue_loop = brain.build_dialog_loop(
+                    listener=dialogue_listener,
+                    stt=stt,
+                    tts=MacOSSayTextToSpeech() if args.voice else NullTextToSpeech(),
+                )
+            else:
+                dialogue_listener = StdinMicrophoneListener()
+                print("dialogue mode: mic or whisper unavailable, type a line and press enter")
+        if dialogue_loop is None and dialogue_listener is not None:
             dialogue_loop = brain.build_dialog_loop(listener=dialogue_listener, tts=NullTextToSpeech())
     # ponytail: one worker thread keeps the camera loop free when remote is
     # slow; upgrade to a request pool only if multiple mics arrive.

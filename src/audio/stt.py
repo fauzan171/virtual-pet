@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import io
+import wave
 from dataclasses import dataclass
+
+import numpy as np
 
 from src.audio.listener import AudioCapture
 
@@ -27,3 +31,38 @@ class MockSpeechToText(SpeechToText):
             return TranscriptionResult(text=capture.prompt_text, confidence=1.0, provider="mock-scripted")
         text = capture.audio_bytes.decode("utf-8", errors="ignore").strip() or "(silence)"
         return TranscriptionResult(text=text, confidence=0.55, provider="mock-bytes")
+
+
+class WhisperSpeechToText(SpeechToText):
+    """Local Whisper transcription via faster-whisper."""
+
+    def __init__(self, model_name: str = "base", language: str = "id", device: str = "cpu", compute_type: str = "int8") -> None:
+        from faster_whisper import WhisperModel
+
+        self.model = WhisperModel(model_name, device=device, compute_type=compute_type)
+        self.language = language
+
+    def transcribe(self, capture: AudioCapture) -> TranscriptionResult:
+        audio = self._decode(capture)
+        if audio is None or audio.size == 0:
+            return TranscriptionResult(text="", confidence=0.0, provider="whisper")
+        segments, _info = self.model.transcribe(
+            audio,
+            language=self.language,
+            vad_filter=True,
+        )
+        text = " ".join(segment.text.strip() for segment in segments).strip()
+        return TranscriptionResult(text=text, confidence=0.9, provider="whisper")
+
+    @staticmethod
+    def _decode(capture: AudioCapture) -> np.ndarray | None:
+        try:
+            with wave.open(io.BytesIO(capture.audio_bytes)) as wav_file:
+                frames = wav_file.readframes(wav_file.getnframes())
+                audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+                channels = wav_file.getnchannels()
+                if channels > 1:
+                    audio = audio.reshape(-1, channels).mean(axis=1)
+                return audio
+        except (wave.Error, EOFError, ValueError):
+            return None

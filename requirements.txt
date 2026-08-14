@@ -1,4 +1,6 @@
+faster-whisper>=1.0
 mediapipe==0.10.14
 numpy>=1.26,<3
 opencv-python>=4.10,<5
 PyYAML>=6.0,<7
+sounddevice>=0.5
