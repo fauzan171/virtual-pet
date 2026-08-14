@@ -34,9 +34,13 @@ class HoloPetRenderer:
         if self._pet_position is None:
             return anchor
         blend = min(0.65, max(0.08, 0.18 * speed))
-        x = int(self._pet_position[0] * (1.0 - blend) + anchor[0] * blend)
-        y = int(self._pet_position[1] * (1.0 - blend) + anchor[1] * blend)
-        return (x, y)
+        dx = anchor[0] - self._pet_position[0]
+        dy = anchor[1] - self._pet_position[1]
+        x = int(self._pet_position[0] + dx * blend)
+        y = int(self._pet_position[1] + dy * blend)
+        # ponytail: tiny arc lift makes hops feel alive; drop if it reads as jitter.
+        arc = int(min(24, math.hypot(dx, dy) * 0.08) * math.sin(blend * math.pi))
+        return (x, y - arc)
 
     def _resolve_anchor(self, tracking: TrackingSnapshot, expression: PetExpression) -> tuple[int, int] | None:
         anchor_name = expression.movement.target_anchor

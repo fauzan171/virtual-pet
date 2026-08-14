@@ -45,22 +45,24 @@ class LocalPetBrain(PetBrain):
 
     def _idle_response(self, context: PetContext, state: str, is_idle_tick: bool) -> BrainResponse:
         subtitle = {
-            "hidden": "Wave to summon your HoloPet.",
-            "spawning": "Signal locked. I am syncing with you.",
-            "following": "I'm orbiting around your hand. Try pointing somewhere.",
-            "curious": "I am reading your movement. Lean in again if you want me closer.",
-            "happy": "Your energy feels bright today.",
-            "evolved": "Upgrade stable. Want to keep playing?",
-        }.get(state, "I'm here with you.")
+            "hidden": "Lambaikan tangan untuk memanggilku.",
+            "spawning": "Sinyal terkunci. Aku menyelaraskan diri denganmu.",
+            "following": "Aku mengorbit tanganmu. Coba tunjuk ke suatu arah.",
+            "curious": "Aku membaca gerakanmu. Dekat lagi kalau mau.",
+            "happy": "Energimu terasa cerah hari ini.",
+            "evolved": "Upgrade stabil. Mau lanjut main?",
+        }.get(state, "Aku di sini bersamamu.")
 
         voice_line = None
         if is_idle_tick and state != "hidden":
             if context.bond >= 4:
-                voice_line = "We make a pretty good team."
+                voice_line = "Kita tim yang kompak."
             elif context.mood == "curious":
-                voice_line = "Show me something new."
+                voice_line = "Tunjukkan sesuatu yang baru dong."
+            elif context.energy >= 0.6:
+                voice_line = "Aku masih semangat nih. Ajak main lagi."
             else:
-                voice_line = "I'm still with you."
+                voice_line = "Aku masih di sini kok."
             subtitle = voice_line
 
         return BrainResponse(

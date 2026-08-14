@@ -64,6 +64,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Showcase quick start
+
+One clean command for a live demo with chat and spoken lines:
+
+```bash
+./run_holopet.sh --brain hermes --dialogue-stdin --voice
+```
+
+The default `./run_holopet.sh` below still runs a fully working webcam demo.
+
 Run a camera-free smoke test:
 
 ```bash
@@ -98,6 +108,16 @@ Recommended remote pet mode:
 export HOLOPET_REMOTE_API_KEY=your_key_here
 ./run_holopet.sh --brain remote --voice
 ```
+
+Live dialogue during the camera demo (type lines in the terminal):
+
+```bash
+./run_holopet.sh --brain remote --dialogue-stdin
+```
+
+Dialogue is handled off the camera thread, so a slow remote model never
+freezes tracking. The HUD shows `BRAIN: REMOTE` or `BRAIN: FALLBACK (LOKAL)`
+so the audience can see which brain answered.
 
 Hermes-style scaffolding mode:
 

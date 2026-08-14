@@ -35,7 +35,7 @@ class HoloPetStateMachine:
         self.last_event_name: str | None = None
         self.last_expression = PetExpression(
             state="hidden",
-            subtitle="Wave to summon your HoloPet.",
+            subtitle="Lambaikan tangan untuk memanggilku.",
             color=(140, 240, 255),
             voice_line=None,
             mood="calm",
