@@ -33,6 +33,22 @@ class AgentTests(unittest.TestCase):
         self.assertIn("Jadi", plan.reply)
         self.assertEqual(coordinator.session.memory.user_name, "Jadi")
 
+    def test_memory_updates_from_favorite_color(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy",
+            mood="joyful",
+            bond=3,
+            energy=0.7,
+            interaction_count=4,
+            last_event="smile",
+            memory_summary="empty",
+        )
+        plan = coordinator.handle(context=context, event=None, user_utterance="warna favoritku biru")
+
+        self.assertIn("biru", plan.reply.lower())
+        self.assertEqual(coordinator.session.memory.favorite_color, "biru")
+
     def test_hermes_bridge_generates_response(self) -> None:
         brain = HermesBridgeBrain()
         context = PetContext(
@@ -92,6 +108,24 @@ class AgentTests(unittest.TestCase):
         result = loop.handle_text(context=context, utterance="ke bahu kanan", tracking=tracking)
 
         self.assertIn("wobbly", result.plan.reply)
+
+    def test_fallback_dialogue_stays_short_and_pet_like(self) -> None:
+        coordinator = AgentCoordinator()
+        result = coordinator.handle(
+            context=PetContext(
+                state="happy",
+                mood="joyful",
+                bond=2,
+                energy=0.6,
+                interaction_count=3,
+                last_event="smile",
+            ),
+            event=None,
+            user_utterance="dekat",
+        )
+
+        self.assertLessEqual(len(result.reply.split(".")), 3)
+        self.assertEqual(result.movement.target_anchor, "nose")
 
     def test_json_persistence_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

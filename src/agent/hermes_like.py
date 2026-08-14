@@ -37,7 +37,7 @@ class HermesLikePlanner:
 
     def _plan_from_event(self, context: PetContext, event: InteractionEvent | None) -> AgentActionPlan:
         if event is None:
-            reply = "I'm floating with you. Call me if you want me closer."
+            reply = "Aku nemenin di sini. Panggil kalau mau aku mendekat."
             return AgentActionPlan(
                 reply=reply,
                 emotion=context.mood,
@@ -51,7 +51,7 @@ class HermesLikePlanner:
 
         if event.name == "open_palm":
             return AgentActionPlan(
-                reply="Your hand looks comfy. I'll perch there.",
+                reply="Tangannya enak. Aku hinggap sini ya.",
                 emotion="playful",
                 animation="perch",
                 emote="soft",
@@ -61,7 +61,7 @@ class HermesLikePlanner:
             )
         if event.name == "point_left":
             return AgentActionPlan(
-                reply="Zooming left!",
+                reply="Sip, aku meluncur ke kiri.",
                 emotion="playful",
                 animation="dash",
                 emote="focus",
@@ -71,7 +71,7 @@ class HermesLikePlanner:
             )
         if event.name == "point_right":
             return AgentActionPlan(
-                reply="Zooming right!",
+                reply="Oke, aku geser ke kanan.",
                 emotion="playful",
                 animation="dash",
                 emote="focus",
@@ -81,7 +81,7 @@ class HermesLikePlanner:
             )
         if event.name == "lean_in":
             return AgentActionPlan(
-                reply="Oooh, close-up mode. I can see you better.",
+                reply="Hehe, dekat sekali. Aku bisa lihat lebih jelas.",
                 emotion="curious",
                 animation="peek",
                 emote="curious",
@@ -91,7 +91,7 @@ class HermesLikePlanner:
             )
         if event.name == "smile":
             return AgentActionPlan(
-                reply="That smile gives me extra holo-energy.",
+                reply="Senyummu bikin energiku naik.",
                 emotion="joyful",
                 animation="happy_spin",
                 emote="grin",
@@ -101,7 +101,7 @@ class HermesLikePlanner:
             )
         if event.name == "two_hand_pose":
             return AgentActionPlan(
-                reply="Charging evolution sequence!",
+                reply="Wah, aku naik level dulu ya!",
                 emotion="heroic",
                 animation="supernova",
                 emote="star",
@@ -110,7 +110,7 @@ class HermesLikePlanner:
                 suggested_state="evolved" if context.bond >= 3 else "happy",
             )
         return AgentActionPlan(
-            reply="I saw that. Want me to do something with it?",
+            reply="Aku lihat kok. Mau aku ngapain?",
             emotion=context.mood,
             animation="hover",
             emote="idle",
@@ -123,26 +123,51 @@ class HermesLikePlanner:
         if "siapa aku" in text or "namaku siapa" in text:
             if context.known_user_name:
                 return AgentActionPlan(
-                    reply=f"You're {context.known_user_name}. I remembered.",
+                    reply=f"Kamu {context.known_user_name}. Aku ingat kok.",
                     emotion="joyful",
                     animation="happy_spin",
                     emote="grin",
                     color_rgb=(120, 255, 170),
+                    movement=MovementCommand(target_anchor="nose", offset_x=70, offset_y=-45, speed=1.1),
                     suggested_state="happy",
                 )
             who = "friend" if context.last_event is None else "playmate"
             return AgentActionPlan(
-                reply=f"You're my favorite {who} right now.",
+                reply=f"Kamu {who} favoritku sekarang.",
                 emotion="joyful",
                 animation="happy_spin",
                 emote="grin",
                 color_rgb=(120, 255, 170),
+                movement=MovementCommand(target_anchor="nose", offset_x=70, offset_y=-45, speed=1.0),
                 suggested_state="happy",
+            )
+        if "warna favorit" in text and ("aku suka" in text or "favoritku" in text):
+            color = user_utterance.split()[-1].strip(".,!?").lower()
+            return AgentActionPlan(
+                reply=f"Oke, aku simpan. Warna favoritmu {color}.",
+                emotion="joyful",
+                animation="happy_spin",
+                emote="grin",
+                color_rgb=(120, 255, 170),
+                movement=MovementCommand(target_anchor="active_palm", offset_y=-35, speed=1.2),
+                memory_update=MemoryUpdate(favorite_color=color, notes=[f"Favorite color {color}"]),
+                suggested_state="happy",
+            )
+        if "warna favoritku" in text or "warna kesukaanku" in text:
+            favorite = "belum tahu" if not context.memory_summary or "favorite_color=" not in context.memory_summary else context.memory_summary.split("favorite_color=", 1)[1].split(",", 1)[0]
+            return AgentActionPlan(
+                reply=f"Warna favoritmu {favorite}.",
+                emotion="curious",
+                animation="peek",
+                emote="curious",
+                color_rgb=(255, 200, 120),
+                movement=MovementCommand(target_anchor="nose", offset_x=70, offset_y=-35, speed=1.0),
+                suggested_state="curious",
             )
         if "namaku" in text:
             name = user_utterance.split()[-1].strip(".,!?")
             return AgentActionPlan(
-                reply=f"Hi {name}, I'll remember you.",
+                reply=f"Halo {name}, aku ingat kamu ya.",
                 emotion="joyful",
                 animation="happy_spin",
                 emote="grin",
@@ -153,7 +178,7 @@ class HermesLikePlanner:
             )
         if "bahu" in text and "kanan" in text:
             return AgentActionPlan(
-                reply="Okay, moving to your right shoulder.",
+                reply="Sip, aku pindah ke bahu kanan.",
                 emotion="playful",
                 animation="jump_to_shoulder",
                 emote="soft",
@@ -163,7 +188,7 @@ class HermesLikePlanner:
             )
         if "bahu" in text and "kiri" in text:
             return AgentActionPlan(
-                reply="Okay, moving to your left shoulder.",
+                reply="Oke, aku ke bahu kiri ya.",
                 emotion="playful",
                 animation="jump_to_shoulder",
                 emote="soft",
@@ -171,9 +196,9 @@ class HermesLikePlanner:
                 movement=MovementCommand(target_anchor="left_shoulder", offset_x=-110, offset_y=-45, speed=1.3),
                 suggested_state="following",
             )
-        if "tangan" in text:
+        if "tangan" in text or "telapak" in text:
             return AgentActionPlan(
-                reply="Show me your palm and I'll land there.",
+                reply="Kasih telapakmu, aku hinggap di sana.",
                 emotion="curious",
                 animation="perch",
                 emote="soft",
@@ -181,11 +206,28 @@ class HermesLikePlanner:
                 movement=MovementCommand(target_anchor="active_palm", offset_y=-40, speed=1.4),
                 suggested_state="following",
             )
+        if "dekat" in text or "mendekat" in text or "ke hidung" in text:
+            return AgentActionPlan(
+                reply="Aku mendekat ya. Jangan kaget, hehe.",
+                emotion="curious",
+                animation="peek",
+                emote="curious",
+                color_rgb=(255, 200, 120),
+                movement=MovementCommand(target_anchor="nose", offset_x=65, offset_y=-40, speed=1.2),
+                suggested_state="curious",
+            )
         return AgentActionPlan(
-            reply="I heard you. When voice mode is connected, I'll answer in fuller dialogue.",
+            reply=self._small_talk_reply(context),
             emotion="calm",
             animation="hover",
             emote="idle",
             color_rgb=(140, 240, 255),
+            movement=MovementCommand(target_anchor="right_shoulder", offset_x=85, offset_y=-35, speed=0.95),
             suggested_state=context.state,
         )
+
+    @staticmethod
+    def _small_talk_reply(context: PetContext) -> str:
+        if context.known_user_name:
+            return f"Aku dengar, {context.known_user_name}. Bilang saja mau aku ke mana."
+        return "Aku dengar. Bilang saja mau aku ke mana."
