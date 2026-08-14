@@ -127,6 +127,53 @@ class AgentTests(unittest.TestCase):
         self.assertLessEqual(len(result.reply.split(".")), 3)
         self.assertEqual(result.movement.target_anchor, "nose")
 
+    def test_last_topic_updates_from_movement_command(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        coordinator.handle(context=context, event=None, user_utterance="ke bahu kanan")
+        self.assertEqual(coordinator.session.memory.last_topic, "gerak")
+
+    def test_last_topic_recall(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        coordinator.handle(context=context, event=None, user_utterance="ke bahu kanan")
+        result = coordinator.handle(context=context, event=None, user_utterance="tadi kita bahas apa")
+        self.assertIn("gerak", result.reply)
+
+    def test_favorite_color_recalled_in_small_talk(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        coordinator.handle(context=context, event=None, user_utterance="aku suka warna favorit biru")
+        result = coordinator.handle(context=context, event=None, user_utterance="halo")
+        self.assertIn("biru", result.reply)
+
+    def test_name_recalled_in_movement_reply(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        coordinator.handle(context=context, event=None, user_utterance="Namaku Jadi")
+        result = coordinator.handle(context=context, event=None, user_utterance="ke bahu kanan")
+        self.assertIn("Jadi", result.reply)
+
+    def test_last_topic_persists_across_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "pet.json"
+            context = PetContext(
+                state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+            )
+            AgentCoordinator(persistence=JsonAgentPersistence(path)).handle(
+                context=context, event=None, user_utterance="ke bahu kanan"
+            )
+            reloaded = JsonAgentPersistence(path).load_session()
+            self.assertEqual(reloaded.memory.last_topic, "gerak")
+
     def test_json_persistence_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "pet.json"

@@ -154,14 +154,16 @@ class HermesLikePlanner:
                 suggested_state="happy",
             )
         if "warna favoritku" in text or "warna kesukaanku" in text:
-            favorite = "belum tahu" if not context.memory_summary or "favorite_color=" not in context.memory_summary else context.memory_summary.split("favorite_color=", 1)[1].split(",", 1)[0]
+            favorite = self._favorite_color(context.memory_summary)
+            reply = f"Warna favoritmu {favorite}." if favorite else "Kamu belum bilang. Bocorin dong."
             return AgentActionPlan(
-                reply=f"Warna favoritmu {favorite}.",
+                reply=reply,
                 emotion="curious",
                 animation="peek",
                 emote="curious",
                 color_rgb=(255, 200, 120),
                 movement=MovementCommand(target_anchor="nose", offset_x=70, offset_y=-35, speed=1.0),
+                memory_update=MemoryUpdate(last_topic="warna favorit"),
                 suggested_state="curious",
             )
         if "namaku" in text:
@@ -173,47 +175,66 @@ class HermesLikePlanner:
                 emote="grin",
                 color_rgb=(120, 255, 170),
                 movement=MovementCommand(target_anchor="nose", offset_x=90, offset_y=-50),
-                memory_update=MemoryUpdate(user_name=name, notes=[f"Met user {name}"]),
+                memory_update=MemoryUpdate(user_name=name, last_topic="nama", notes=[f"Met user {name}"]),
                 suggested_state="happy",
             )
         if "bahu" in text and "kanan" in text:
             return AgentActionPlan(
-                reply="Sip, aku pindah ke bahu kanan.",
+                reply=self._with_name("Sip, aku pindah ke bahu kanan.", context),
                 emotion="playful",
                 animation="jump_to_shoulder",
                 emote="soft",
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="right_shoulder", offset_x=110, offset_y=-45, speed=1.3),
+                memory_update=MemoryUpdate(last_topic="gerak"),
                 suggested_state="following",
             )
         if "bahu" in text and "kiri" in text:
             return AgentActionPlan(
-                reply="Oke, aku ke bahu kiri ya.",
+                reply=self._with_name("Oke, aku ke bahu kiri ya.", context),
                 emotion="playful",
                 animation="jump_to_shoulder",
                 emote="soft",
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="left_shoulder", offset_x=-110, offset_y=-45, speed=1.3),
+                memory_update=MemoryUpdate(last_topic="gerak"),
                 suggested_state="following",
             )
         if "tangan" in text or "telapak" in text:
             return AgentActionPlan(
-                reply="Kasih telapakmu, aku hinggap di sana.",
+                reply=self._with_name("Kasih telapakmu, aku hinggap di sana.", context),
                 emotion="curious",
                 animation="perch",
                 emote="soft",
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="active_palm", offset_y=-40, speed=1.4),
+                memory_update=MemoryUpdate(last_topic="gerak"),
                 suggested_state="following",
             )
         if "dekat" in text or "mendekat" in text or "ke hidung" in text:
             return AgentActionPlan(
-                reply="Aku mendekat ya. Jangan kaget, hehe.",
+                reply=self._with_name("Aku mendekat ya. Jangan kaget, hehe.", context),
                 emotion="curious",
                 animation="peek",
                 emote="curious",
                 color_rgb=(255, 200, 120),
                 movement=MovementCommand(target_anchor="nose", offset_x=65, offset_y=-40, speed=1.2),
+                memory_update=MemoryUpdate(last_topic="gerak"),
+                suggested_state="curious",
+            )
+        if "topik terakhir" in text or "tadi kita" in text or "bahas apa" in text:
+            if context.memory_summary and "last_topic=" in context.memory_summary:
+                topic = context.memory_summary.split("last_topic=", 1)[1].split(",", 1)[0]
+                reply = f"Tadi kita bahas {topic}."
+            else:
+                reply = "Belum ada topik. Yuk mulai sesuatu."
+            return AgentActionPlan(
+                reply=reply,
+                emotion="curious",
+                animation="peek",
+                emote="curious",
+                color_rgb=(255, 200, 120),
+                movement=MovementCommand(target_anchor="nose", offset_x=70, offset_y=-35, speed=1.0),
                 suggested_state="curious",
             )
         return AgentActionPlan(
@@ -223,11 +244,33 @@ class HermesLikePlanner:
             emote="idle",
             color_rgb=(140, 240, 255),
             movement=MovementCommand(target_anchor="right_shoulder", offset_x=85, offset_y=-35, speed=0.95),
+            memory_update=MemoryUpdate(last_topic=self._topic_from(text)),
             suggested_state=context.state,
         )
 
     @staticmethod
-    def _small_talk_reply(context: PetContext) -> str:
+    def _with_name(reply: str, context: PetContext) -> str:
+        if context.known_user_name:
+            return f"{reply.rstrip('.!')} ya, {context.known_user_name}."
+        return reply
+
+    @staticmethod
+    def _favorite_color(memory_summary: str) -> str | None:
+        if "favorite_color=" in memory_summary:
+            return memory_summary.split("favorite_color=", 1)[1].split(",", 1)[0]
+        return None
+
+    @staticmethod
+    def _topic_from(text: str) -> str:
+        words = [word.strip(".,!?") for word in text.split() if len(word.strip(".,!?")) > 2]
+        return " ".join(words[:3]) if words else text[:20]
+
+    def _small_talk_reply(self, context: PetContext) -> str:
+        color = self._favorite_color(context.memory_summary)
+        if context.known_user_name and color:
+            return f"Aku dengar, {context.known_user_name}. Masih suka {color} kan?"
         if context.known_user_name:
             return f"Aku dengar, {context.known_user_name}. Bilang saja mau aku ke mana."
+        if color:
+            return f"Aku dengar. Eh, {color} masih favoritmu kan?"
         return "Aku dengar. Bilang saja mau aku ke mana."
