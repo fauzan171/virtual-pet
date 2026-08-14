@@ -1,0 +1,34 @@
+camera:
+  width: 1280
+  height: 720
+  fps_target: 30
+
+smoothing:
+  pose_alpha: 0.45
+  hand_alpha: 0.35
+  face_alpha: 0.40
+
+gestures:
+  wave_min_frames: 8
+  open_palm_hold_ms: 700
+  point_hold_ms: 500
+  lean_in_ratio: 1.15
+  smile_threshold: 0.65
+  two_hand_pose_hold_ms: 900
+
+cooldowns:
+  greeting_ms: 2500
+  follow_ms: 600
+  voice_line_ms: 2000
+  evolve_ms: 6000
+  idle_chatter_ms: 4500
+
+render:
+  pet_idle_anchor: right_shoulder
+  subtitle_y_offset: 60
+  glow_strength: 0.8
+  particle_density: 0.4
+
+ai:
+  provider: auto
+  persona: playful hologram robot fox
