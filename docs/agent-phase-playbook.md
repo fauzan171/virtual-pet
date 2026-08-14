@@ -64,7 +64,33 @@ flowchart LR
 - shorter, more companion-like Indonesian replies
 - pushed
 
+### Phase 4
+
+- last_topic updates from common utterances
+- favorite color and name recalled across dialogue branches
+- last_topic recall and persistence tested
+- pushed
+
+### Phase 5
+
+- probe output prints fallback summary and safety note
+- HUD distinguishes REMOTE vs FALLBACK (LOKAL) with color
+- fallback replies carry a soft local-brain note
+- camera demo dialog runs on a worker thread so slow remote never blocks tracking
+- pushed
+
+### Phase 6
+
+- idle chatter translated to warm Indonesian, energy-aware variants
+- renderer hop arc makes movement transitions feel alive
+- README gains a one-command showcase quick start
+- pushed
+
 ## Next Recommended Phases
+
+The core roadmap (Phases 1-6) is complete. Remaining work is maintenance and
+extension; candidate targets: real microphone + STT integration, voice persona
+tuning, and stress-testing the remote endpoint under live demo conditions.
 
 ### Phase 4: Memory Expansion
 
