@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -13,6 +14,27 @@ from src.core.models import PetExpression
 
 def _rgba_canvas(size: int) -> np.ndarray:
     return np.zeros((size, size, 4), dtype=np.uint8)
+
+
+@dataclass(slots=True)
+class SkinStyle:
+    """Palette and feature switches for one pet character look."""
+
+    ear_shape: str = "point"  # point | round
+    tail: bool = True
+    blush: bool = True
+    paw_color: tuple[int, int, int] = (234, 244, 255)
+
+
+SKINS: dict[str, SkinStyle] = {
+    "fox": SkinStyle(),
+    "cat": SkinStyle(ear_shape="round", tail=False, paw_color=(246, 235, 255)),
+    "bunny": SkinStyle(ear_shape="tall", tail=False, blush=True, paw_color=(255, 240, 246)),
+}
+
+
+def list_skins() -> list[str]:
+    return sorted(SKINS)
 
 
 def _draw_glow(canvas: np.ndarray, center: tuple[int, int], radius: int, color: tuple[int, int, int], alpha: int) -> None:
@@ -48,8 +70,10 @@ def _alpha_blit(dst: np.ndarray, src: np.ndarray, top_left: tuple[int, int]) -> 
 class CartoonPetSheet:
     """Builds a cute cartoon fox-style hologram pet as animation frames."""
 
-    def __init__(self, frame_size: int = 192) -> None:
+    def __init__(self, frame_size: int = 192, skin: str = "fox") -> None:
         self.frame_size = frame_size
+        self.skin_name = skin if skin in SKINS else "fox"
+        self.style = SKINS[self.skin_name]
 
     def frame(self, expression: PetExpression, tick: float) -> np.ndarray:
         size = self.frame_size
@@ -64,8 +88,10 @@ class CartoonPetSheet:
         body_color = expression.color
         outline = (18, 28, 38)
         soft_white = (246, 251, 255)
-        paw_white = (234, 244, 255)
+        paw_white = self.style.paw_color
         blush = (255, 179, 210)
+        has_tail = self.style.tail
+        ear_shape = self.style.ear_shape
 
         _draw_glow(canvas, (cx, base_y + 8), int(56 * scale), body_color, 26)
         _draw_glow(canvas, (cx, base_y + 8), int(42 * scale), body_color, 42)
@@ -77,18 +103,19 @@ class CartoonPetSheet:
         tail_len = int(42 * scale)
         leg_hop = int(math.sin(tick * 7.0) * 3) if expression.animation in {"happy_spin", "dash"} else 0
 
-        tail_swing = math.sin(tick * (6.0 if expression.animation in {"dash", "happy_spin"} else 3.2)) * (16 if expression.animation in {"dash", "happy_spin"} else 8)
-        tail = np.array(
-            [
-                [cx - body_w // 2 + 4, base_y + 10],
-                [cx - body_w // 2 - tail_len // 2, base_y + 18 + int(tail_swing * 0.2)],
-                [cx - body_w // 2 - tail_len, base_y + int(tail_swing * 0.45)],
-                [cx - body_w // 2 - tail_len // 2, base_y - 6 + int(tail_swing * 0.25)],
-            ],
-            dtype=np.int32,
-        )
-        cv2.polylines(canvas, [tail], False, (*body_color, 255), 12, cv2.LINE_AA)
-        cv2.polylines(canvas, [tail], False, (*outline, 255), 3, cv2.LINE_AA)
+        if has_tail:
+            tail_swing = math.sin(tick * (6.0 if expression.animation in {"dash", "happy_spin"} else 3.2)) * (16 if expression.animation in {"dash", "happy_spin"} else 8)
+            tail = np.array(
+                [
+                    [cx - body_w // 2 + 4, base_y + 10],
+                    [cx - body_w // 2 - tail_len // 2, base_y + 18 + int(tail_swing * 0.2)],
+                    [cx - body_w // 2 - tail_len, base_y + int(tail_swing * 0.45)],
+                    [cx - body_w // 2 - tail_len // 2, base_y - 6 + int(tail_swing * 0.25)],
+                ],
+                dtype=np.int32,
+            )
+            cv2.polylines(canvas, [tail], False, (*body_color, 255), 12, cv2.LINE_AA)
+            cv2.polylines(canvas, [tail], False, (*outline, 255), 3, cv2.LINE_AA)
 
         cv2.ellipse(canvas, (cx, base_y + 12), (body_w // 2, body_h // 2), 0, 0, 360, (*body_color, 255), -1, cv2.LINE_AA)
         cv2.ellipse(canvas, (cx, base_y + 12), (body_w // 2, body_h // 2), 0, 0, 360, (*outline, 255), 3, cv2.LINE_AA)
@@ -99,23 +126,7 @@ class CartoonPetSheet:
         cv2.circle(canvas, (cx, head_y), head_r, (*body_color, 255), -1, cv2.LINE_AA)
         cv2.circle(canvas, (cx, head_y), head_r, (*outline, 255), 3, cv2.LINE_AA)
 
-        ear_offset = int(head_r * 0.7)
-        ear_top = int(head_r * 1.18)
-        left_ear = np.array(
-            [[cx - ear_offset + 6, head_y - head_r + 8], [cx - ear_offset - 10, head_y - ear_top], [cx - ear_offset + 22, head_y - ear_top + 12]],
-            dtype=np.int32,
-        )
-        right_ear = np.array(
-            [[cx + ear_offset - 6, head_y - head_r + 8], [cx + ear_offset + 10, head_y - ear_top], [cx + ear_offset - 22, head_y - ear_top + 12]],
-            dtype=np.int32,
-        )
-        for ear in (left_ear, right_ear):
-            cv2.fillConvexPoly(canvas, ear, (*body_color, 255), cv2.LINE_AA)
-            cv2.polylines(canvas, [ear], True, (*outline, 255), 3, cv2.LINE_AA)
-        inner_left = np.array([[cx - ear_offset + 4, head_y - head_r + 14], [cx - ear_offset - 5, head_y - ear_top + 18], [cx - ear_offset + 15, head_y - ear_top + 20]], dtype=np.int32)
-        inner_right = np.array([[cx + ear_offset - 4, head_y - head_r + 14], [cx + ear_offset + 5, head_y - ear_top + 18], [cx + ear_offset - 15, head_y - ear_top + 20]], dtype=np.int32)
-        cv2.fillConvexPoly(canvas, inner_left, (*blush, 230), cv2.LINE_AA)
-        cv2.fillConvexPoly(canvas, inner_right, (*blush, 230), cv2.LINE_AA)
+        self._draw_ears(canvas, cx, head_y, head_r, body_color, outline, blush)
 
         cv2.ellipse(canvas, (cx, head_y + 8), (face_r, int(face_r * 0.78)), 0, 0, 360, (*soft_white, 255), -1, cv2.LINE_AA)
         cv2.ellipse(canvas, (cx, head_y + 8), (face_r, int(face_r * 0.78)), 0, 0, 360, (*outline, 255), 2, cv2.LINE_AA)
@@ -166,6 +177,47 @@ class CartoonPetSheet:
                 cv2.circle(canvas, (px, py), 4, (*soft_white, 240), -1, cv2.LINE_AA)
 
         return canvas
+
+    def _draw_ears(
+        self,
+        canvas: np.ndarray,
+        cx: int,
+        head_y: int,
+        head_r: int,
+        body_color: tuple[int, int, int],
+        outline: tuple[int, int, int],
+        blush: tuple[int, int, int],
+    ) -> None:
+        ear_offset = int(head_r * 0.7)
+        if self.style.ear_shape == "round":
+            for sign in (-1, 1):
+                center = (cx + sign * ear_offset, head_y - head_r + 2)
+                cv2.circle(canvas, center, int(head_r * 0.42), (*body_color, 255), -1, cv2.LINE_AA)
+                cv2.circle(canvas, center, int(head_r * 0.42), (*outline, 255), 3, cv2.LINE_AA)
+            return
+        if self.style.ear_shape == "tall":
+            for sign in (-1, 1):
+                center = (cx + sign * int(head_r * 0.5), head_y - int(head_r * 1.15))
+                cv2.ellipse(canvas, center, (int(head_r * 0.3), int(head_r * 0.75)), sign * -12, 0, 360, (*body_color, 255), -1, cv2.LINE_AA)
+                cv2.ellipse(canvas, center, (int(head_r * 0.3), int(head_r * 0.75)), sign * -12, 0, 360, (*outline, 255), 3, cv2.LINE_AA)
+                cv2.ellipse(canvas, (center[0], center[1] + 4), (int(head_r * 0.16), int(head_r * 0.5)), sign * -12, 0, 360, (*blush, 230), -1, cv2.LINE_AA)
+            return
+        ear_top = int(head_r * 1.18)
+        left_ear = np.array(
+            [[cx - ear_offset + 6, head_y - head_r + 8], [cx - ear_offset - 10, head_y - ear_top], [cx - ear_offset + 22, head_y - ear_top + 12]],
+            dtype=np.int32,
+        )
+        right_ear = np.array(
+            [[cx + ear_offset - 6, head_y - head_r + 8], [cx + ear_offset + 10, head_y - ear_top], [cx + ear_offset - 22, head_y - ear_top + 12]],
+            dtype=np.int32,
+        )
+        for ear in (left_ear, right_ear):
+            cv2.fillConvexPoly(canvas, ear, (*body_color, 255), cv2.LINE_AA)
+            cv2.polylines(canvas, [ear], True, (*outline, 255), 3, cv2.LINE_AA)
+        inner_left = np.array([[cx - ear_offset + 4, head_y - head_r + 14], [cx - ear_offset - 5, head_y - ear_top + 18], [cx - ear_offset + 15, head_y - ear_top + 20]], dtype=np.int32)
+        inner_right = np.array([[cx + ear_offset - 4, head_y - head_r + 14], [cx + ear_offset + 5, head_y - ear_top + 18], [cx + ear_offset - 15, head_y - ear_top + 20]], dtype=np.int32)
+        cv2.fillConvexPoly(canvas, inner_left, (*blush, 230), cv2.LINE_AA)
+        cv2.fillConvexPoly(canvas, inner_right, (*blush, 230), cv2.LINE_AA)
 
     def export_preview_sheet(self, output_path: str | Path) -> None:
         output_path = Path(output_path)

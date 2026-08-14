@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dialogue-stdin", action="store_true", help="Poll terminal stdin for dialogue while the camera demo is running.")
     parser.add_argument("--dialogue-script", action="append", default=[], help="Queue scripted dialogue lines during the live camera demo.")
     parser.add_argument("--probe-remote", action="store_true", help="Run a remote dialogue probe without camera mode.")
+    parser.add_argument("--skin", default=None, help="Pet character skin: fox, cat, or bunny. Overrides render.skin in the config.")
     return parser.parse_args()
 
 
@@ -145,7 +146,8 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
     brain = build_brain(args.brain, args.memory_path)
     tracker = GestureTracker(config)
     machine = HoloPetStateMachine(config["cooldowns"], brain=brain)
-    renderer = HoloPetRenderer(subtitle_y_offset=config["render"]["subtitle_y_offset"])
+    skin = args.skin or config["render"].get("skin", "fox")
+    renderer = HoloPetRenderer(subtitle_y_offset=config["render"]["subtitle_y_offset"], skin=skin)
     voice = VoicePlayer(enabled=args.voice)
     dialogue_loop = None
     dialogue_listener = None

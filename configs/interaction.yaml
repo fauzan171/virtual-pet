@@ -28,6 +28,7 @@ render:
   subtitle_y_offset: 60
   glow_strength: 0.8
   particle_density: 0.4
+  skin: fox  # fox | cat | bunny, override with --skin
 
 ai:
   provider: auto

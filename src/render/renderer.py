@@ -13,11 +13,11 @@ from src.render.cartoon_sheet import CartoonPetSheet, composite_sprite
 
 
 class HoloPetRenderer:
-    def __init__(self, subtitle_y_offset: int = 60) -> None:
+    def __init__(self, subtitle_y_offset: int = 60, skin: str = "fox") -> None:
         self.subtitle_y_offset = subtitle_y_offset
         self._start_time = time.monotonic()
         self._pet_position: tuple[int, int] | None = None
-        self._sheet = CartoonPetSheet(frame_size=192)
+        self._sheet = CartoonPetSheet(frame_size=192, skin=skin)
 
     def render(self, frame: np.ndarray, tracking: TrackingSnapshot, expression: PetExpression, show_debug: bool) -> np.ndarray:
         canvas = frame.copy()
