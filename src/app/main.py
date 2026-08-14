@@ -7,7 +7,12 @@ import os
 import queue
 import threading
 import time
+import warnings
 from pathlib import Path
+
+# ponytail: mediapipe's protobuf layer spams GetPrototype deprecation warnings
+# every frame; silence them instead of fixing upstream.
+warnings.filterwarnings("ignore", message="SymbolDatabase.GetPrototype() is deprecated.")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 os.environ.setdefault("MPLCONFIGDIR", str(PROJECT_ROOT / ".cache" / "matplotlib"))

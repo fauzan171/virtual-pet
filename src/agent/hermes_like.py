@@ -37,7 +37,14 @@ class HermesLikePlanner:
 
     def _plan_from_event(self, context: PetContext, event: InteractionEvent | None) -> AgentActionPlan:
         if event is None:
-            reply = "Aku nemenin di sini. Panggil kalau mau aku mendekat."
+            # Cycle idle lines instead of repeating one forever.
+            lines = (
+                "Aku nemenin di sini. Panggil kalau mau aku mendekat.",
+                "Masih di sini kok. Santai aja.",
+                "Kamu gerak dikit, aku langsung nengok.",
+                "Energiku stabil. Mau main sesuatu?",
+            )
+            reply = lines[context.interaction_count % len(lines)]
             return AgentActionPlan(
                 reply=reply,
                 emotion=context.mood,
