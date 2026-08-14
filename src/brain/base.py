@@ -32,6 +32,20 @@ class PetBrain:
     ) -> BrainResponse:
         raise NotImplementedError
 
+    def build_dialog_loop(self, *, tts=None, stt=None, listener=None):
+        # ponytail: every brain gets a local fallback planner for chat so text/
+        # voice dialogue works even without a remote brain. Bridges override this.
+        from src.agent.coordinator import AgentCoordinator
+        from src.agent.dialog_loop import DialogueLoop
+        from src.agent.hermes_like import HermesLikePlanner
+
+        return DialogueLoop(
+            coordinator=AgentCoordinator(planner=HermesLikePlanner()),
+            tts=tts,
+            stt=stt,
+            listener=listener,
+        )
+
 
 def default_movement_for_state(suggested_state: str) -> MovementCommand:
     if suggested_state == "following":

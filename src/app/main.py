@@ -82,14 +82,14 @@ def run_self_test(config: dict, brain_name: str, memory_path: str, utterances: l
         time.sleep(0.2)
     idle = machine.process(None, now=time.monotonic() + 9)
     print(f"{'idle_tick':>14} -> {idle.state:>10} | {idle.mood:>8} | {idle.subtitle}")
-    if isinstance(brain, (HermesBridgeBrain, RemoteBridgeBrain)):
-        context = machine._context(tracking_confidence=1.0)
-        print("   agent_chat ->", brain.preview_dialog(context, "Namaku Jadi"))
-        print("   agent_chat ->", brain.preview_dialog(context, "ke bahu kanan"))
-        dialog_loop = brain.build_dialog_loop(tts=NullTextToSpeech())
-        scripted = utterances or ["namaku siapa", "ke bahu kiri"]
-        for result in dialog_loop.run_self_test(context=context, utterances=scripted):
-            print(f"dialog_self -> {result.utterance} => {result.plan.reply} | src={result.plan.response_source} | {result.memory_summary}")
+    context = machine._context(tracking_confidence=1.0)
+    # Every brain builds a dialog loop now (bridges use their planner, others
+    # fall back to the local Hermes-like planner), so dialogue self-test runs
+    # for all modes.
+    dialog_loop = brain.build_dialog_loop(tts=NullTextToSpeech())
+    scripted = utterances or ["namaku siapa", "ke bahu kiri"]
+    for result in dialog_loop.run_self_test(context=context, utterances=scripted):
+        print(f"dialog_self -> {result.utterance} => {result.plan.reply} | src={result.plan.response_source} | {result.memory_summary}")
     print("self-test complete")
     return 0
 
@@ -177,7 +177,9 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
     dialogue_listener = None
     dialogue_expression = None
     dialogue_until = 0.0
-    if isinstance(brain, (HermesBridgeBrain, RemoteBridgeBrain)):
+    # Every brain supports dialogue now: bridges use their own planner, other
+    # brains fall back to the local Hermes-like planner in PetBrain.build_dialog_loop.
+    if args.dialogue_script or args.dialogue_stdin or args.mic:
         if args.dialogue_script:
             dialogue_listener = MockMicrophoneListener()
             for utterance in args.dialogue_script:
@@ -203,8 +205,6 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
                 dialogue_listener = StdinMicrophoneListener()
                 print("dialogue mode: mic or whisper unavailable, type a line and press enter")
         if dialogue_loop is None and dialogue_listener is not None:
-            # ponytail: dialog replies were silent with --voice because the TTS
-            # default is enabled=False; keep both paths in sync if one changes.
             dialogue_loop = brain.build_dialog_loop(
                 listener=dialogue_listener,
                 tts=MacOSSayTextToSpeech(enabled=True) if args.voice else NullTextToSpeech(),

@@ -175,9 +175,9 @@ class HoloPetStateMachine:
         self.state = next_state
         self.mood = plan.emotion
         self.last_event_name = "dialogue"
-        voice_line = plan.reply if plan.should_speak and self.cooldowns["voice"].ready(now) else None
-        if voice_line:
-            self.cooldowns["voice"].mark(now)
+        # ponytail: voice_line stays None here — the dialog loop's own TTS already
+        # spoke the reply; re-speaking in the camera loop doubled every line.
+        voice_line = None
         expression = PetExpression(
             state=next_state,
             subtitle=plan.reply,

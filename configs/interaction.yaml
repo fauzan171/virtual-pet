@@ -19,9 +19,9 @@ gestures:
 cooldowns:
   greeting_ms: 2500
   follow_ms: 600
-  voice_line_ms: 2000
+  voice_line_ms: 6000
   evolve_ms: 6000
-  idle_chatter_ms: 4500
+  idle_chatter_ms: 12000
 
 render:
   pet_idle_anchor: right_shoulder
