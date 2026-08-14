@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import queue
+import threading
 import time
 from pathlib import Path
 
@@ -102,8 +104,16 @@ def run_remote_probe(brain_name: str, memory_path: str, utterances: list[str]) -
     dialog_loop = brain.build_dialog_loop(tts=NullTextToSpeech())
     scripted = utterances or ["Namaku Jadi", "ke bahu kanan", "namaku siapa"]
     print(f"remote_probe brain={brain.provider_name}")
+    start = time.monotonic()
+    fallback_turns = 0
     for result in dialog_loop.run_self_test(context=context, utterances=scripted):
+        if result.plan.response_source != "remote":
+            fallback_turns += 1
         print(f"probe -> {result.utterance} => {result.plan.reply} | src={result.plan.response_source} | move={result.plan.movement.target_anchor}")
+    elapsed = time.monotonic() - start
+    print(f"probe_summary turns={len(scripted)} remote={len(scripted) - fallback_turns} fallback={fallback_turns} elapsed={elapsed:.1f}s")
+    if fallback_turns:
+        print("probe_note: remote lambat atau tidak tersedia, fallback lokal yang menjawab. Demo tetap aman.")
     return 0
 
 
@@ -113,6 +123,17 @@ def open_camera(index: int, config: dict) -> cv2.VideoCapture:
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config["camera"]["height"])
     cap.set(cv2.CAP_PROP_FPS, config["camera"]["fps_target"])
     return cap
+
+
+def _dialog_worker(loop, machine, tracking_holder: dict, results: "queue.Queue") -> None:
+    while True:
+        tracking = tracking_holder.get("tracking")
+        confidence = tracking.tracking_confidence if tracking is not None else 1.0
+        result = loop.capture_and_handle(context=machine._context(tracking_confidence=confidence), tracking=tracking)
+        if result is None:
+            time.sleep(0.05)
+            continue
+        results.put(result)
 
 
 def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
@@ -145,6 +166,16 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
             print("dialogue mode: type a line in the terminal and press enter")
         if dialogue_listener is not None:
             dialogue_loop = brain.build_dialog_loop(listener=dialogue_listener, tts=NullTextToSpeech())
+    # ponytail: one worker thread keeps the camera loop free when remote is
+    # slow; upgrade to a request pool only if multiple mics arrive.
+    dialog_results: "queue.Queue" = queue.Queue()
+    dialog_tracking: dict = {"tracking": None}
+    if dialogue_loop is not None:
+        threading.Thread(
+            target=_dialog_worker,
+            args=(dialogue_loop, machine, dialog_tracking, dialog_results),
+            daemon=True,
+        ).start()
     frame_count = 0
 
     try:
@@ -156,14 +187,16 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
 
             frame = cv2.flip(frame, 1)
             tracking = tracker.process(frame)
+            dialog_tracking["tracking"] = tracking
             now = time.monotonic()
             expression = machine.process(tracking.fired_event, now=now, tracking_confidence=tracking.tracking_confidence)
-            if dialogue_loop is not None:
-                result = dialogue_loop.capture_and_handle(context=machine._context(tracking_confidence=tracking.tracking_confidence), tracking=tracking)
-                if result is not None:
-                    dialogue_expression = machine.apply_dialog_plan(result.plan, now=now)
-                    dialogue_until = now + 2.8
-                    voice.speak(dialogue_expression.voice_line)
+            try:
+                result = dialog_results.get_nowait()
+                dialogue_expression = machine.apply_dialog_plan(result.plan, now=now)
+                dialogue_until = now + 2.8
+                voice.speak(dialogue_expression.voice_line)
+            except queue.Empty:
+                pass
             active_expression = expression
             if dialogue_expression is not None and now <= dialogue_until:
                 active_expression = dialogue_expression

@@ -247,6 +247,20 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(plan.memory_update.user_name, "Jadi")
         self.assertEqual(plan.response_source, "remote")
 
+    def test_remote_failure_reply_flags_local_source(self) -> None:
+        planner = RemotePlanner(
+            RemotePlannerConfig(model="fake-model", api_key="secret", api_base="https://example.invalid/v1")
+        )
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        with mock.patch.object(planner, "_chat_completion", side_effect=ValueError("boom")):
+            plan = planner.plan(context=context, event=None, user_utterance="ke bahu kanan")
+
+        self.assertEqual(plan.response_source, "fallback")
+        self.assertIn("otak lokal", plan.reply)
+        self.assertEqual(plan.movement.target_anchor, "right_shoulder")
+
     def test_remote_bridge_dialog_loop_uses_remote_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             memory_path = Path(tmpdir) / "remote.json"

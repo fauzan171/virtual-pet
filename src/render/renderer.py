@@ -105,7 +105,14 @@ class HoloPetRenderer:
         cv2.putText(canvas, "HOLOPET // INTERACTIVE CAMERA DEMO", (32, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (130, 250, 255), 2, cv2.LINE_AA)
         cv2.putText(canvas, f"STATE: {expression.state.upper()}", (32, 77), cv2.FONT_HERSHEY_SIMPLEX, 0.55, expression.color, 2, cv2.LINE_AA)
         cv2.putText(canvas, f"MOOD: {expression.mood.upper()}  BOND: {expression.bond_level}/5", (420, 77), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (220, 245, 255), 2, cv2.LINE_AA)
-        cv2.putText(canvas, f"BRAIN: {expression.response_source.upper()}", (32, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 238, 255), 1, cv2.LINE_AA)
+        source = expression.response_source
+        if source == "remote":
+            source_label, source_color = "REMOTE", (140, 240, 255)
+        elif source == "fallback":
+            source_label, source_color = "FALLBACK (LOKAL)", (255, 200, 120)
+        else:
+            source_label, source_color = source.upper(), (200, 238, 255)
+        cv2.putText(canvas, f"BRAIN: {source_label}", (32, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.5, source_color, 1, cv2.LINE_AA)
 
         bar_x0 = width - 260
         bar_x1 = width - 40

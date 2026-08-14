@@ -95,7 +95,10 @@ class RemotePlanner:
             KeyError,
             json.JSONDecodeError,
         ):
-            return self.fallback.plan(context=context, event=event, user_utterance=user_utterance)
+            plan = self.fallback.plan(context=context, event=event, user_utterance=user_utterance)
+            if user_utterance and plan.response_source == "fallback":
+                plan.reply = f"{plan.reply.rstrip('.!')} (otak lokal duluan ya)."
+            return plan
 
     def _request_plan(
         self,
