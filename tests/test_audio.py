@@ -53,6 +53,12 @@ class AudioAbstractionTests(unittest.TestCase):
     def test_null_tts_is_safe_noop(self) -> None:
         self.assertFalse(NullTextToSpeech().speak("hello"))
 
+    def test_say_tts_respects_enabled_flag(self) -> None:
+        from src.audio.tts import MacOSSayTextToSpeech
+
+        # enabled=False is the default; callers must opt in or dialog stays silent.
+        self.assertFalse(MacOSSayTextToSpeech(enabled=False).speak("hello"))
+
     def test_stdin_listener_reads_available_line(self) -> None:
         listener = StdinMicrophoneListener()
         fake_stdin = mock.Mock()

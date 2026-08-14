@@ -12,34 +12,64 @@ from src.core.models import PetExpression, TrackingSnapshot
 from src.render.cartoon_sheet import CartoonPetSheet, composite_sprite
 
 
+# Per-animation movement feel: blend rate controls arrival speed, arc scale controls hop height.
+BLEND_RATES: dict[str, float] = {
+    "dash": 0.45,
+    "jump_to_shoulder": 0.50,
+    "happy_spin": 0.35,
+    "supernova": 0.30,
+    "spawn_burst": 0.35,
+    "bounce": 0.32,
+    "peek": 0.12,
+    "drift": 0.14,
+    "hover": 0.22,
+}
+ARC_SCALES: dict[str, float] = {
+    "jump_to_shoulder": 0.15,
+    "dash": 0.12,
+    "bounce": 0.12,
+    "happy_spin": 0.10,
+    "hover": 0.04,
+    "peek": 0.04,
+    "drift": 0.03,
+}
+
+
 class HoloPetRenderer:
     def __init__(self, subtitle_y_offset: int = 60, skin: str = "fox") -> None:
         self.subtitle_y_offset = subtitle_y_offset
         self._start_time = time.monotonic()
         self._pet_position: tuple[int, int] | None = None
+        self._motion_speed: float = 0.0
         self._sheet = CartoonPetSheet(frame_size=192, skin=skin)
 
     def render(self, frame: np.ndarray, tracking: TrackingSnapshot, expression: PetExpression, show_debug: bool) -> np.ndarray:
         canvas = frame.copy()
         anchor = self._resolve_anchor(tracking, expression)
         if anchor is not None and expression.state != "hidden":
-            self._pet_position = self._smooth_move(anchor, expression.movement.speed)
+            new_position = self._smooth_move(anchor, expression.movement.speed, expression.animation)
+            if self._pet_position is not None:
+                self._motion_speed = math.hypot(new_position[0] - self._pet_position[0], new_position[1] - self._pet_position[1])
+            self._pet_position = new_position
             self._draw_pet(canvas, self._pet_position, expression)
         self._draw_hud(canvas, tracking, expression)
         if show_debug:
             self._draw_debug(canvas, tracking)
         return canvas
 
-    def _smooth_move(self, anchor: tuple[int, int], speed: float) -> tuple[int, int]:
+    def _smooth_move(self, anchor: tuple[int, int], speed: float, animation: str = "hover") -> tuple[int, int]:
         if self._pet_position is None:
             return anchor
-        blend = min(0.65, max(0.08, 0.18 * speed))
+        # ponytail: per-animation blend rate, not a tween — anchors track a live
+        # human, so a fixed-duration hop would lag a moving target.
+        base = BLEND_RATES.get(animation, 0.22)
+        blend = min(0.65, max(0.08, base * speed))
         dx = anchor[0] - self._pet_position[0]
         dy = anchor[1] - self._pet_position[1]
         x = int(self._pet_position[0] + dx * blend)
         y = int(self._pet_position[1] + dy * blend)
-        # ponytail: tiny arc lift makes hops feel alive; drop if it reads as jitter.
-        arc = int(min(24, math.hypot(dx, dy) * 0.08) * math.sin(blend * math.pi))
+        arc_scale = ARC_SCALES.get(animation, 0.08)
+        arc = int(min(30, math.hypot(dx, dy) * arc_scale) * math.sin(blend * math.pi))
         return (x, y - arc)
 
     def _resolve_anchor(self, tracking: TrackingSnapshot, expression: PetExpression) -> tuple[int, int] | None:
@@ -76,7 +106,8 @@ class HoloPetRenderer:
         t = time.monotonic() - self._start_time
         bob = int(math.sin(t * 2.5) * (6 + expression.energy * 10))
         center = (center[0], center[1] + bob)
-        sprite = self._sheet.frame(expression, t)
+        sprite = self._sheet.frame(expression, t, motion_speed=self._motion_speed)
+        self._motion_speed *= 0.8
         scale = 0.82 + expression.energy * 0.18 + expression.bond_level * 0.015
         if expression.state == "evolved":
             scale += 0.08

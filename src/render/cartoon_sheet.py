@@ -26,6 +26,38 @@ class SkinStyle:
     paw_color: tuple[int, int, int] = (234, 244, 255)
 
 
+@dataclass(slots=True, frozen=True)
+class AnimationStyle:
+    """Motion parameters for one animation state, consumed by frame()."""
+
+    tail_speed: float = 3.2
+    tail_amp: float = 8.0
+    leg_hop: bool = False
+    arm_wave: bool = False
+    blink_rate: float = 1.5
+
+
+ANIMATIONS: dict[str, AnimationStyle] = {
+    "hover": AnimationStyle(),
+    "drift": AnimationStyle(tail_speed=2.4, tail_amp=6.0),
+    "dash": AnimationStyle(tail_speed=8.0, tail_amp=18.0, leg_hop=True, blink_rate=2.2),
+    "happy_spin": AnimationStyle(tail_speed=7.0, tail_amp=16.0, leg_hop=True, blink_rate=2.0),
+    "supernova": AnimationStyle(tail_speed=6.0, tail_amp=14.0, blink_rate=2.0),
+    "spawn_burst": AnimationStyle(tail_speed=5.0, tail_amp=12.0, blink_rate=2.0),
+    "peek": AnimationStyle(tail_speed=2.0, tail_amp=5.0, blink_rate=1.0),
+    "perch": AnimationStyle(tail_speed=3.0, tail_amp=7.0, arm_wave=True),
+    "orbit": AnimationStyle(tail_speed=4.0, tail_amp=10.0),
+    "blink": AnimationStyle(blink_rate=3.0),
+    "jump_to_shoulder": AnimationStyle(tail_speed=7.5, tail_amp=17.0, leg_hop=True, blink_rate=2.2),
+    "bounce": AnimationStyle(tail_speed=5.5, tail_amp=12.0, leg_hop=True),
+    "charge": AnimationStyle(tail_speed=4.5, tail_amp=10.0, arm_wave=True),
+}
+
+
+def resolve_animation(name: str) -> AnimationStyle:
+    return ANIMATIONS.get(name, ANIMATIONS["hover"])
+
+
 SKINS: dict[str, SkinStyle] = {
     "fox": SkinStyle(),
     "cat": SkinStyle(ear_shape="round", tail=False, paw_color=(246, 235, 255)),
@@ -75,7 +107,8 @@ class CartoonPetSheet:
         self.skin_name = skin if skin in SKINS else "fox"
         self.style = SKINS[self.skin_name]
 
-    def frame(self, expression: PetExpression, tick: float) -> np.ndarray:
+    def frame(self, expression: PetExpression, tick: float, motion_speed: float = 0.0) -> np.ndarray:
+        style = resolve_animation(expression.animation)
         size = self.frame_size
         canvas = _rgba_canvas(size)
         cx = size // 2
@@ -84,6 +117,8 @@ class CartoonPetSheet:
         scale = 1.0 + expression.bond_level * 0.03
         if expression.state == "evolved":
             scale += 0.15
+        # ponytail: squash-and-stretch fakes inertia; upgrade to bone rig if sprites get complex.
+        squash = 1.0 + min(0.12, motion_speed * 0.04)
 
         body_color = expression.color
         outline = (18, 28, 38)
@@ -93,18 +128,18 @@ class CartoonPetSheet:
         has_tail = self.style.tail
         ear_shape = self.style.ear_shape
 
-        _draw_glow(canvas, (cx, base_y + 8), int(56 * scale), body_color, 26)
-        _draw_glow(canvas, (cx, base_y + 8), int(42 * scale), body_color, 42)
+        _draw_glow(canvas, (cx, base_y + 8), int(56 * scale * squash), body_color, 26)
+        _draw_glow(canvas, (cx, base_y + 8), int(42 * scale * squash), body_color, 42)
 
-        body_w = int(62 * scale)
-        body_h = int(54 * scale)
+        body_w = int(62 * scale * squash)
+        body_h = int(54 * scale / squash)
         head_r = int(36 * scale)
         face_r = int(24 * scale)
         tail_len = int(42 * scale)
-        leg_hop = int(math.sin(tick * 7.0) * 3) if expression.animation in {"happy_spin", "dash"} else 0
+        leg_hop = int(math.sin(tick * 7.0) * 3) if style.leg_hop else 0
 
         if has_tail:
-            tail_swing = math.sin(tick * (6.0 if expression.animation in {"dash", "happy_spin"} else 3.2)) * (16 if expression.animation in {"dash", "happy_spin"} else 8)
+            tail_swing = math.sin(tick * style.tail_speed) * style.tail_amp
             tail = np.array(
                 [
                     [cx - body_w // 2 + 4, base_y + 10],
@@ -133,7 +168,7 @@ class CartoonPetSheet:
 
         eye_y = head_y + 2
         eye_dx = int(head_r * 0.42)
-        blink = expression.animation == "blink" or abs(math.sin(tick * 1.5)) < 0.06
+        blink = abs(math.sin(tick * style.blink_rate)) < 0.06
         if blink:
             cv2.line(canvas, (cx - eye_dx - 5, eye_y), (cx - eye_dx + 5, eye_y), (*outline, 255), 3, cv2.LINE_AA)
             cv2.line(canvas, (cx + eye_dx - 5, eye_y), (cx + eye_dx + 5, eye_y), (*outline, 255), 3, cv2.LINE_AA)
@@ -161,7 +196,7 @@ class CartoonPetSheet:
             cv2.ellipse(canvas, (px, py + 4), (10, 6), 0, 0, 360, (*paw_white, 255), -1, cv2.LINE_AA)
             cv2.ellipse(canvas, (px, py + 4), (10, 6), 0, 0, 360, (*outline, 255), 2, cv2.LINE_AA)
 
-        if expression.animation in {"perch", "dash"}:
+        if style.arm_wave:
             arm_shift = int(math.sin(tick * 9) * 4)
             cv2.line(canvas, (cx + 26, base_y + 2), (cx + 50, base_y - 12 + arm_shift), (*outline, 255), 5, cv2.LINE_AA)
             cv2.ellipse(canvas, (cx + 56, base_y - 14 + arm_shift), (9, 6), 0, 0, 360, (*paw_white, 255), -1, cv2.LINE_AA)

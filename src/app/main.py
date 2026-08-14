@@ -192,13 +192,18 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
                 dialogue_loop = brain.build_dialog_loop(
                     listener=dialogue_listener,
                     stt=stt,
-                    tts=MacOSSayTextToSpeech() if args.voice else NullTextToSpeech(),
+                    tts=MacOSSayTextToSpeech(enabled=True) if args.voice else NullTextToSpeech(),
                 )
             else:
                 dialogue_listener = StdinMicrophoneListener()
                 print("dialogue mode: mic or whisper unavailable, type a line and press enter")
         if dialogue_loop is None and dialogue_listener is not None:
-            dialogue_loop = brain.build_dialog_loop(listener=dialogue_listener, tts=NullTextToSpeech())
+            # ponytail: dialog replies were silent with --voice because the TTS
+            # default is enabled=False; keep both paths in sync if one changes.
+            dialogue_loop = brain.build_dialog_loop(
+                listener=dialogue_listener,
+                tts=MacOSSayTextToSpeech(enabled=True) if args.voice else NullTextToSpeech(),
+            )
     # ponytail: one worker thread keeps the camera loop free when remote is
     # slow; upgrade to a request pool only if multiple mics arrive.
     dialog_results: "queue.Queue" = queue.Queue()

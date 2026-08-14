@@ -41,6 +41,27 @@ class CartoonSheetTests(unittest.TestCase):
 
         self.assertEqual(CartoonPetSheet(skin="nope").skin_name, "fox")
 
+    def test_every_animation_renders(self) -> None:
+        from src.render.cartoon_sheet import ANIMATIONS, CartoonPetSheet
+
+        sheet = CartoonPetSheet(frame_size=160)
+        for name in ANIMATIONS:
+            expression = PetExpression(state="happy", subtitle="hi", color=(120, 255, 170), mood="joyful", animation=name, emote="grin")
+            frame = sheet.frame(expression, tick=0.5)
+            self.assertGreater(int(frame[:, :, 3].max()), 0, name)
+
+    def test_motion_speed_stretches_body_horizontally(self) -> None:
+        from src.render.cartoon_sheet import CartoonPetSheet
+
+        sheet = CartoonPetSheet(frame_size=160)
+        expression = PetExpression(state="following", subtitle="hi", color=(120, 255, 170), mood="playful", animation="dash", emote="focus")
+        still = sheet.frame(expression, tick=0.5, motion_speed=0.0)
+        stretched = sheet.frame(expression, tick=0.5, motion_speed=3.0)
+        # squash widens the body: horizontal alpha coverage must grow.
+        still_cols = int((still[:, :, 3] > 0).any(axis=0).sum())
+        stretched_cols = int((stretched[:, :, 3] > 0).any(axis=0).sum())
+        self.assertGreater(stretched_cols, still_cols)
+
 
 if __name__ == "__main__":
     unittest.main()
