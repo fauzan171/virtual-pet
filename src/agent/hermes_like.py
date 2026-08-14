@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from src.agent.schema import AgentActionPlan, MemoryUpdate, MovementCommand
+from src.brain.base import wander_movement
 from src.core.models import InteractionEvent, PetContext
 
 
@@ -44,14 +45,18 @@ class HermesLikePlanner:
                 "Kamu gerak dikit, aku langsung nengok.",
                 "Energiku stabil. Mau main sesuatu?",
             )
-            reply = lines[context.interaction_count % len(lines)]
+            step = context.interaction_count
+            reply = lines[step % len(lines)]
+            # ponytail: pet wanders across body anchors on idle ticks so it feels
+            # alive without user input; renderer falls back when a point is hidden.
+            movement = wander_movement(step)
             return AgentActionPlan(
                 reply=reply,
                 emotion=context.mood,
-                animation="hover",
+                animation="bounce" if step % 2 else "hover",
                 emote="idle",
                 color_rgb=(140, 240, 255),
-                movement=MovementCommand(target_anchor="right_shoulder", speed=0.8),
+                movement=movement,
                 should_speak=False,
                 suggested_state=context.state,
             )
@@ -198,7 +203,7 @@ class HermesLikePlanner:
             )
         if "bahu" in text and "kiri" in text:
             return AgentActionPlan(
-                reply=self._with_name("Oke, aku ke bahu kiri ya.", context),
+                reply=self._with_name("Oke, aku ke bahu kiri.", context),
                 emotion="playful",
                 animation="jump_to_shoulder",
                 emote="soft",
@@ -215,6 +220,19 @@ class HermesLikePlanner:
                 emote="soft",
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="active_palm", offset_y=-40, speed=1.4),
+                memory_update=MemoryUpdate(last_topic="gerak"),
+                suggested_state="following",
+            )
+        body_anchor = self._body_anchor_from(text)
+        if body_anchor:
+            anchor, offset_x, offset_y, side = body_anchor
+            return AgentActionPlan(
+                reply=self._with_name(f"Oke, aku nangkring di {side}mu.", context),
+                emotion="playful",
+                animation="jump_to_shoulder",
+                emote="soft",
+                color_rgb=(120, 220, 255),
+                movement=MovementCommand(target_anchor=anchor, offset_x=offset_x, offset_y=offset_y, speed=1.3),
                 memory_update=MemoryUpdate(last_topic="gerak"),
                 suggested_state="following",
             )
@@ -254,6 +272,20 @@ class HermesLikePlanner:
             memory_update=MemoryUpdate(last_topic=self._topic_from(text)),
             suggested_state=context.state,
         )
+
+    @staticmethod
+    def _body_anchor_from(text: str) -> tuple[str, int, int, str] | None:
+        """Map whole-body words to anchors so the pet can perch anywhere on the body."""
+        parts = (("siku", "elbow", 80), ("lutut", "knee", 70), ("paha", "hip", 80), ("pinggang", "hip", 80), ("pinggul", "hip", 80))
+        for word, anchor, offset in parts:
+            if word not in text:
+                continue
+            if "kiri" in text:
+                return (f"left_{anchor}", -offset, -30, f"{word} kiri")
+            return (f"right_{anchor}", offset, -30, f"{word} kanan")
+        if "kepala" in text or "ke pala" in text:
+            return ("nose", 0, -130, "kepala")
+        return None
 
     @staticmethod
     def _with_name(reply: str, context: PetContext) -> str:

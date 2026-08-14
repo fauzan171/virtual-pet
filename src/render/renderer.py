@@ -79,6 +79,14 @@ class HoloPetRenderer:
             "left_shoulder": tracking.left_shoulder,
             "active_palm": tracking.active_palm,
             "nose": tracking.nose,
+            "left_elbow": tracking.left_elbow,
+            "right_elbow": tracking.right_elbow,
+            "left_hip": tracking.left_hip,
+            "right_hip": tracking.right_hip,
+            "left_knee": tracking.left_knee,
+            "right_knee": tracking.right_knee,
+            "left_wrist": tracking.left_wrist,
+            "right_wrist": tracking.right_wrist,
         }.get(anchor_name)
         if anchor_point is None:
             anchor_point = self._fallback_anchor(tracking, expression.state)
@@ -91,8 +99,12 @@ class HoloPetRenderer:
 
     @staticmethod
     def _fallback_anchor(tracking: TrackingSnapshot, state: str) -> tuple[int, int] | None:
-        if state == "following" and tracking.active_palm is not None:
-            return (tracking.active_palm[0], tracking.active_palm[1] - 70)
+        if state == "following":
+            # Carry on the hand; palm center is best but drops often, so wrists
+            # keep the pet glued to the hand even when fingers aren't resolved.
+            hand = tracking.active_palm or tracking.right_wrist or tracking.left_wrist
+            if hand is not None:
+                return (hand[0], hand[1] - 70)
         if state in {"curious", "evolved"} and tracking.nose is not None:
             y_offset = -150 if state == "evolved" else -60
             return (tracking.nose[0] + (0 if state == "evolved" else 90), tracking.nose[1] + y_offset)
@@ -171,6 +183,12 @@ class HoloPetRenderer:
             tracking.right_shoulder,
             tracking.left_wrist,
             tracking.right_wrist,
+            tracking.left_elbow,
+            tracking.right_elbow,
+            tracking.left_hip,
+            tracking.right_hip,
+            tracking.left_knee,
+            tracking.right_knee,
             tracking.active_palm,
         ]
         for point in points:

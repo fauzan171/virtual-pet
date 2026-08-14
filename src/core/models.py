@@ -67,6 +67,12 @@ class TrackingSnapshot:
     right_shoulder: Optional[tuple[int, int]] = None
     left_wrist: Optional[tuple[int, int]] = None
     right_wrist: Optional[tuple[int, int]] = None
+    left_elbow: Optional[tuple[int, int]] = None
+    right_elbow: Optional[tuple[int, int]] = None
+    left_hip: Optional[tuple[int, int]] = None
+    right_hip: Optional[tuple[int, int]] = None
+    left_knee: Optional[tuple[int, int]] = None
+    right_knee: Optional[tuple[int, int]] = None
     active_palm: Optional[tuple[int, int]] = None
     pointing_target: Optional[tuple[int, int]] = None
     smile_score: float = 0.0

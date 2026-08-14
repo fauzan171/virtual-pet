@@ -46,5 +46,42 @@ class SmoothMoveTests(unittest.TestCase):
         self.assertEqual(renderer._smooth_move((50, 60), speed=1.0), (50, 60))
 
 
+@unittest.skipUnless(find_spec("cv2") is not None, "cv2 is not installed")
+class AnchorTests(unittest.TestCase):
+    def _renderer(self):
+        from src.render.renderer import HoloPetRenderer
+
+        return HoloPetRenderer()
+
+    def test_body_anchors_resolve(self) -> None:
+        from src.core.models import MovementCommand, PetExpression, TrackingSnapshot
+
+        renderer = self._renderer()
+        tracking = TrackingSnapshot(
+            frame_size=(640, 480),
+            left_elbow=(10, 20),
+            right_hip=(30, 40),
+            left_knee=(50, 60),
+        )
+        for anchor_name, expected in (
+            ("left_elbow", (10, 20)),
+            ("right_hip", (30, 40)),
+            ("left_knee", (50, 60)),
+        ):
+            expression = PetExpression(
+                state="following", subtitle="", color=(0, 0, 0),
+                movement=MovementCommand(target_anchor=anchor_name),
+            )
+            self.assertEqual(renderer._resolve_anchor(tracking, expression), expected)
+
+    def test_following_falls_back_to_wrist_when_palm_missing(self) -> None:
+        from src.core.models import PetExpression, TrackingSnapshot
+
+        renderer = self._renderer()
+        tracking = TrackingSnapshot(frame_size=(640, 480), right_wrist=(100, 200))
+        expression = PetExpression(state="following", subtitle="", color=(0, 0, 0))
+        self.assertEqual(renderer._fallback_anchor(tracking, "following"), (100, 130))
+
+
 if __name__ == "__main__":
     unittest.main()

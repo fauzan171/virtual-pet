@@ -59,6 +59,12 @@ class GestureTracker:
             snapshot.right_shoulder = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_SHOULDER.value], width, height)
             snapshot.left_wrist = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_WRIST.value], width, height)
             snapshot.right_wrist = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_WRIST.value], width, height)
+            snapshot.left_elbow = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_ELBOW.value], width, height)
+            snapshot.right_elbow = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_ELBOW.value], width, height)
+            snapshot.left_hip = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_HIP.value], width, height)
+            snapshot.right_hip = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_HIP.value], width, height)
+            snapshot.left_knee = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_KNEE.value], width, height)
+            snapshot.right_knee = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_KNEE.value], width, height)
             snapshot.tracking_confidence = float(
                 np.mean(
                     [

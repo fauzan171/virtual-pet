@@ -153,6 +153,32 @@ class AgentTests(unittest.TestCase):
         result = coordinator.handle(context=context, event=None, user_utterance="halo")
         self.assertIn("biru", result.reply)
 
+    def test_body_anchor_utterances_route_to_whole_body(self) -> None:
+        coordinator = AgentCoordinator()
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        cases = {
+            "ke siku kiri dong": "left_elbow",
+            "nangkring di lutut kanan": "right_knee",
+            "duduk di paha kiri": "left_hip",
+            "naik ke kepala": "nose",
+        }
+        for utterance, expected_anchor in cases.items():
+            result = coordinator.handle(context=context, event=None, user_utterance=utterance)
+            self.assertEqual(result.movement.target_anchor, expected_anchor, utterance)
+
+    def test_idle_event_plan_wanders(self) -> None:
+        coordinator = AgentCoordinator()
+        anchors = set()
+        for step in range(7):
+            context = PetContext(
+                state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=step, last_event="smile",
+            )
+            plan = coordinator.handle(context=context, event=None, user_utterance=None)
+            anchors.add(plan.movement.target_anchor)
+        self.assertGreater(len(anchors), 3)
+
     def test_name_recalled_in_movement_reply(self) -> None:
         coordinator = AgentCoordinator()
         context = PetContext(

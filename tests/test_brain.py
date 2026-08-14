@@ -39,6 +39,19 @@ class LocalBrainTests(unittest.TestCase):
         )
         self.assertIsNotNone(response.voice_line)
 
+    def test_idle_tick_wanders_across_body_anchors(self) -> None:
+        anchors = set()
+        for step in range(7):
+            self.context.interaction_count = step
+            response = self.brain.generate(
+                context=self.context,
+                event=None,
+                suggested_state="happy",
+                is_idle_tick=True,
+            )
+            anchors.add(response.movement.target_anchor)
+        self.assertGreater(len(anchors), 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.brain.base import BrainResponse, PetBrain, default_movement_for_state
+from src.brain.base import BrainResponse, PetBrain, default_movement_for_state, wander_movement
 from src.core.models import InteractionEvent, PetContext
 
 
@@ -65,14 +65,17 @@ class LocalPetBrain(PetBrain):
                 voice_line = "Aku masih di sini kok."
             subtitle = voice_line
 
+        # ponytail: idle ticks wander across body anchors so the pet moves on
+        # its own; renderer falls back when a landmark is hidden.
+        movement = wander_movement(context.interaction_count) if is_idle_tick else default_movement_for_state(state)
         return BrainResponse(
             subtitle=subtitle,
             voice_line=voice_line,
             mood=context.mood,
-            animation="orbit" if state == "following" else "hover",
+            animation="bounce" if is_idle_tick else ("orbit" if state == "following" else "hover"),
             emote="idle",
             color=self.STATE_COLORS.get(state, self.STATE_COLORS["idle"]),
-            movement=default_movement_for_state(state),
+            movement=movement,
             response_source=self.provider_name,
         )
 

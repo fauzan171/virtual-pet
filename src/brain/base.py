@@ -47,6 +47,24 @@ class PetBrain:
         )
 
 
+# Whole-body roam targets: shoulders, arms, lap and head. The renderer falls
+# back when a landmark is off-camera, so any subset works.
+WANDER_ANCHORS = (
+    ("right_shoulder", 110, -40),
+    ("left_shoulder", -110, -40),
+    ("right_elbow", 90, -30),
+    ("left_elbow", -90, -30),
+    ("right_hip", 90, -30),
+    ("left_hip", -90, -30),
+    ("nose", 0, -120),
+)
+
+
+def wander_movement(step: int) -> MovementCommand:
+    anchor, offset_x, offset_y = WANDER_ANCHORS[step % len(WANDER_ANCHORS)]
+    return MovementCommand(target_anchor=anchor, offset_x=offset_x, offset_y=offset_y, speed=0.9)
+
+
 def default_movement_for_state(suggested_state: str) -> MovementCommand:
     if suggested_state == "following":
         return MovementCommand(target_anchor="active_palm", offset_y=-40, speed=1.2)
