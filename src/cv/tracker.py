@@ -12,6 +12,44 @@ import mediapipe as mp
 import numpy as np
 
 from src.core.models import InteractionEvent, TrackingSnapshot
+from src.cv.body_geometry import BodyGeometryMapper, LandmarkObservation
+
+
+_POSE_LANDMARKS = {
+    "nose": mp.solutions.holistic.PoseLandmark.NOSE.value,
+    "left_ear": mp.solutions.holistic.PoseLandmark.LEFT_EAR.value,
+    "right_ear": mp.solutions.holistic.PoseLandmark.RIGHT_EAR.value,
+    "left_shoulder": mp.solutions.holistic.PoseLandmark.LEFT_SHOULDER.value,
+    "right_shoulder": mp.solutions.holistic.PoseLandmark.RIGHT_SHOULDER.value,
+    "left_elbow": mp.solutions.holistic.PoseLandmark.LEFT_ELBOW.value,
+    "right_elbow": mp.solutions.holistic.PoseLandmark.RIGHT_ELBOW.value,
+    "left_wrist": mp.solutions.holistic.PoseLandmark.LEFT_WRIST.value,
+    "right_wrist": mp.solutions.holistic.PoseLandmark.RIGHT_WRIST.value,
+    "left_hip": mp.solutions.holistic.PoseLandmark.LEFT_HIP.value,
+    "right_hip": mp.solutions.holistic.PoseLandmark.RIGHT_HIP.value,
+    "left_knee": mp.solutions.holistic.PoseLandmark.LEFT_KNEE.value,
+    "right_knee": mp.solutions.holistic.PoseLandmark.RIGHT_KNEE.value,
+    "left_ankle": mp.solutions.holistic.PoseLandmark.LEFT_ANKLE.value,
+    "right_ankle": mp.solutions.holistic.PoseLandmark.RIGHT_ANKLE.value,
+    "left_heel": mp.solutions.holistic.PoseLandmark.LEFT_HEEL.value,
+    "right_heel": mp.solutions.holistic.PoseLandmark.RIGHT_HEEL.value,
+    "left_foot": mp.solutions.holistic.PoseLandmark.LEFT_FOOT_INDEX.value,
+    "right_foot": mp.solutions.holistic.PoseLandmark.RIGHT_FOOT_INDEX.value,
+}
+
+_LEGACY_SNAPSHOT_ANCHORS = (
+    "nose",
+    "left_shoulder",
+    "right_shoulder",
+    "left_wrist",
+    "right_wrist",
+    "left_elbow",
+    "right_elbow",
+    "left_hip",
+    "right_hip",
+    "left_knee",
+    "right_knee",
+)
 
 
 @dataclass(slots=True)
@@ -26,12 +64,35 @@ class GestureTracker:
 
     def __init__(self, config: dict) -> None:
         self.config = config
+        tracking_config = config.get("tracking", {})
+        smoothing_config = config.get("smoothing", {})
+        segmentation_enabled = bool(tracking_config.get("segmentation_enabled", True))
         self.holistic = mp.solutions.holistic.Holistic(
             min_detection_confidence=0.5,
             min_tracking_confidence=0.5,
             model_complexity=1,
             refine_face_landmarks=True,
+            enable_segmentation=segmentation_enabled,
+            smooth_segmentation=segmentation_enabled,
         )
+        self.body_mapper = BodyGeometryMapper(
+            pose_alpha=float(smoothing_config.get("pose_alpha", 0.45)),
+            visibility_threshold=float(tracking_config.get("visibility_threshold", 0.45)),
+            hold_seconds=float(tracking_config.get("anchor_hold_ms", 220)) / 1000.0,
+            mask_threshold=float(tracking_config.get("segmentation_threshold", 0.55)),
+            min_mask_area_ratio=float(tracking_config.get("segmentation_min_area_ratio", 0.015)),
+        )
+        self.segmentation_enabled = segmentation_enabled
+        self.hand_alpha = float(smoothing_config.get("hand_alpha", 0.35))
+        self.face_alpha = float(smoothing_config.get("face_alpha", 0.40))
+        self._active_palm: tuple[float, float] | None = None
+        self._active_palm_at: float | None = None
+        self._active_hand_side: str | None = None
+        self._active_hand_at: float | None = None
+        self._smoothed_smile = 0.0
+        self._smile_at: float | None = None
+        self._last_pointing_target: tuple[int, int] | None = None
+        self._last_pointing_at: float | None = None
         self.wave_history: deque[float] = deque(maxlen=18)
         self.open_palm_started_at: float | None = None
         self.point_started_at: tuple[str, float] | None = None
@@ -43,10 +104,11 @@ class GestureTracker:
         self.holistic.close()
 
     def process(self, frame: np.ndarray) -> TrackingSnapshot:
+        now = time.monotonic()
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.holistic.process(rgb)
         height, width = frame.shape[:2]
-        snapshot = TrackingSnapshot(frame_size=(width, height))
+        snapshot = TrackingSnapshot(frame_size=(width, height), captured_at=now)
 
         pose = results.pose_landmarks.landmark if results.pose_landmarks else None
         face = results.face_landmarks.landmark if results.face_landmarks else None
@@ -54,38 +116,52 @@ class GestureTracker:
         right_hand = results.right_hand_landmarks.landmark if results.right_hand_landmarks else None
 
         if pose:
-            snapshot.nose = self._px(pose[mp.solutions.holistic.PoseLandmark.NOSE.value], width, height)
-            snapshot.left_shoulder = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_SHOULDER.value], width, height)
-            snapshot.right_shoulder = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_SHOULDER.value], width, height)
-            snapshot.left_wrist = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_WRIST.value], width, height)
-            snapshot.right_wrist = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_WRIST.value], width, height)
-            snapshot.left_elbow = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_ELBOW.value], width, height)
-            snapshot.right_elbow = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_ELBOW.value], width, height)
-            snapshot.left_hip = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_HIP.value], width, height)
-            snapshot.right_hip = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_HIP.value], width, height)
-            snapshot.left_knee = self._px(pose[mp.solutions.holistic.PoseLandmark.LEFT_KNEE.value], width, height)
-            snapshot.right_knee = self._px(pose[mp.solutions.holistic.PoseLandmark.RIGHT_KNEE.value], width, height)
-            snapshot.tracking_confidence = float(
-                np.mean(
-                    [
-                        pose[mp.solutions.holistic.PoseLandmark.LEFT_SHOULDER.value].visibility,
-                        pose[mp.solutions.holistic.PoseLandmark.RIGHT_SHOULDER.value].visibility,
-                    ]
+            observations = {
+                name: LandmarkObservation(
+                    x=float(pose[index].x),
+                    y=float(pose[index].y),
+                    visibility=float(pose[index].visibility),
                 )
-            )
+                for name, index in _POSE_LANDMARKS.items()
+            }
+        else:
+            observations = {}
 
-        if right_hand:
-            snapshot.active_palm = self._hand_center(right_hand, width, height)
-        elif left_hand:
-            snapshot.active_palm = self._hand_center(left_hand, width, height)
+        geometry = self.body_mapper.update(
+            observations,
+            (width, height),
+            now,
+            segmentation_mask=getattr(results, "segmentation_mask", None) if self.segmentation_enabled else None,
+        )
+        snapshot.pose_anchors = geometry.anchors
+        snapshot.anchor_confidence = geometry.anchor_confidence
+        snapshot.body_bounds = geometry.body_bounds
+        snapshot.body_scale_px = geometry.body_scale_px
+        snapshot.full_body_visible = geometry.full_body_visible
+        snapshot.tracking_confidence = geometry.tracking_confidence
+        for anchor_name in _LEGACY_SNAPSHOT_ANCHORS:
+            setattr(snapshot, anchor_name, geometry.anchors.get(anchor_name))
+
+        gesture_side = self._gesture_candidate_side(left_hand, right_hand)
+        selected_hand, active_hand = self._select_active_hand(
+            left_hand,
+            right_hand,
+            now,
+            preferred_side=gesture_side,
+        )
+        raw_palm = self._hand_center(selected_hand, width, height) if selected_hand is not None else None
+        snapshot.active_palm = self._smooth_auxiliary_point(raw_palm, now)
+        snapshot.active_hand = active_hand
+        if snapshot.active_palm is not None:
+            snapshot.anchor_confidence["active_palm"] = 1.0
 
         if face:
-            snapshot.smile_score = self._smile_score(face)
+            snapshot.smile_score = self._smooth_smile(self._smile_score(face), now)
 
         event = (
             self._detect_wave(pose)
-            or self._detect_open_palm(left_hand, right_hand)
-            or self._detect_point(pose, left_hand, right_hand, width, height)
+            or self._detect_open_palm(selected_hand, active_hand)
+            or self._detect_point(selected_hand, active_hand, width, height)
             or self._detect_lean_in(snapshot)
             or self._detect_smile(snapshot)
             or self._detect_two_hand_pose(pose, left_hand, right_hand)
@@ -93,13 +169,26 @@ class GestureTracker:
         snapshot.fired_event = event
 
         if event and event.name.startswith("point_") and snapshot.active_palm:
-            dx = -180 if event.name == "point_left" else 180
-            snapshot.pointing_target = (snapshot.active_palm[0] + dx, snapshot.active_palm[1] - 30)
+            scale = max(0.55, min(1.8, snapshot.body_scale_px / 230.0))
+            dx = int((-180 if event.name == "point_left" else 180) * scale)
+            target = (
+                min(width - 1, max(0, snapshot.active_palm[0] + dx)),
+                min(height - 1, max(0, snapshot.active_palm[1] - int(30 * scale))),
+            )
+            self._last_pointing_target = target
+            self._last_pointing_at = now
+        if self._last_pointing_target is not None and self._last_pointing_at is not None and now - self._last_pointing_at <= 2.0:
+            snapshot.pointing_target = self._last_pointing_target
+            snapshot.anchor_confidence["pointing_target"] = 0.9
 
         snapshot.debug = {
             "event": event.name if event else "-",
             "smile": f"{snapshot.smile_score:.2f}",
             "baseline_shoulder": f"{self.baseline_shoulder_width:.1f}" if self.baseline_shoulder_width else "unset",
+            "body_scale": f"{snapshot.body_scale_px:.1f}px",
+            "body_bounds": str(snapshot.body_bounds or "-"),
+            "bounds_source": geometry.bounds_source,
+            "full_body": "yes" if snapshot.full_body_visible else "no",
         }
         return snapshot
 
@@ -133,8 +222,7 @@ class GestureTracker:
             return InteractionEvent(name="wave", confidence=0.92)
         return None
 
-    def _detect_open_palm(self, left_hand, right_hand) -> InteractionEvent | None:
-        hand = right_hand or left_hand
+    def _detect_open_palm(self, hand, hand_name: str | None) -> InteractionEvent | None:
         if hand is None:
             self.open_palm_started_at = None
             return None
@@ -149,19 +237,15 @@ class GestureTracker:
         if hold_ms >= self.config["gestures"]["open_palm_hold_ms"] and self._cooldown_ready("open_palm", 1.2):
             self._mark_event("open_palm")
             self.open_palm_started_at = None
-            return InteractionEvent(name="open_palm", confidence=0.88)
+            return InteractionEvent(
+                name="open_palm",
+                confidence=0.88,
+                metadata={"hand": hand_name} if hand_name else {},
+            )
         return None
 
-    def _detect_point(self, pose, left_hand, right_hand, width: int, height: int) -> InteractionEvent | None:
-        hand_name = None
-        hand = None
-        if right_hand and self._is_pointing(right_hand):
-            hand_name = "right"
-            hand = right_hand
-        elif left_hand and self._is_pointing(left_hand):
-            hand_name = "left"
-            hand = left_hand
-        if hand is None:
+    def _detect_point(self, hand, hand_name: str | None, width: int, height: int) -> InteractionEvent | None:
+        if hand is None or not self._is_pointing(hand):
             self.point_started_at = None
             return None
         wrist = self._px(hand[0], width, height)
@@ -175,7 +259,11 @@ class GestureTracker:
         if hold_ms >= self.config["gestures"]["point_hold_ms"] and self._cooldown_ready(direction, 1.0):
             self._mark_event(direction)
             self.point_started_at = None
-            return InteractionEvent(name=direction, confidence=0.83)
+            return InteractionEvent(
+                name=direction,
+                confidence=0.83,
+                metadata={"hand": hand_name} if hand_name else {},
+            )
         return None
 
     def _detect_lean_in(self, snapshot: TrackingSnapshot) -> InteractionEvent | None:
@@ -247,11 +335,129 @@ class GestureTracker:
     def _hand_center(self, hand_landmarks, width: int, height: int) -> tuple[int, int]:
         xs = [lm.x for lm in hand_landmarks]
         ys = [lm.y for lm in hand_landmarks]
-        return (int(np.mean(xs) * width), int(np.mean(ys) * height))
+        return (
+            min(width - 1, max(0, int(round(float(np.mean(xs)) * width)))),
+            min(height - 1, max(0, int(round(float(np.mean(ys)) * height)))),
+        )
+
+    def _gesture_candidate_side(self, left_hand, right_hand) -> str | None:
+        """Pick the hand currently making a single-hand gesture, if any."""
+
+        pointing = {
+            "left": left_hand is not None and self._is_pointing(left_hand),
+            "right": right_hand is not None and self._is_pointing(right_hand),
+        }
+        for side in (self._active_hand_side, "right", "left"):
+            if side and pointing.get(side, False):
+                return side
+
+        open_palms = {
+            "left": left_hand is not None and self._is_open_palm(left_hand),
+            "right": right_hand is not None and self._is_open_palm(right_hand),
+        }
+        for side in (self._active_hand_side, "right", "left"):
+            if side and open_palms.get(side, False):
+                return side
+        return None
+
+    def _select_active_hand(
+        self,
+        left_hand,
+        right_hand,
+        now: float,
+        *,
+        preferred_side: str | None = None,
+    ):
+        """Keep hand identity stable through a brief single-hand dropout."""
+
+        preferred_hand = right_hand if preferred_side == "right" else left_hand
+        if preferred_side in {"left", "right"} and preferred_hand is not None:
+            if preferred_side != self._active_hand_side:
+                # A real gesture is allowed to take ownership, but never blend
+                # its coordinates with the previously active physical hand.
+                self._active_palm = None
+                self._active_palm_at = None
+                self.point_started_at = None
+                self.open_palm_started_at = None
+            self._active_hand_side = preferred_side
+            self._active_hand_at = now
+            return preferred_hand, preferred_side
+
+        current_hand = right_hand if self._active_hand_side == "right" else left_hand
+        if self._active_hand_side in {"left", "right"} and current_hand is not None:
+            self._active_hand_at = now
+            return current_hand, self._active_hand_side
+
+        if (
+            self._active_hand_side in {"left", "right"}
+            and self._active_hand_at is not None
+            and now - self._active_hand_at <= self.body_mapper.hold_seconds
+        ):
+            return None, self._active_hand_side
+
+        if right_hand is None and left_hand is None:
+            # Preserve identity even after the detailed hand landmarks expire;
+            # pose wrists can still provide a same-side anatomical fallback.
+            return None, self._active_hand_side
+
+        new_side = "right" if right_hand is not None else "left"
+        if new_side != self._active_hand_side:
+            # Never EMA-blend two different physical hands across the torso.
+            self._active_palm = None
+            self._active_palm_at = None
+            self.point_started_at = None
+            self.open_palm_started_at = None
+        self._active_hand_side = new_side
+        self._active_hand_at = now if new_side is not None else None
+        selected = right_hand if new_side == "right" else (left_hand if new_side == "left" else None)
+        return selected, new_side
+
+    def _smooth_auxiliary_point(self, point: tuple[int, int] | None, now: float) -> tuple[int, int] | None:
+        if point is None:
+            if self._active_palm is None or self._active_palm_at is None:
+                return None
+            if now - self._active_palm_at <= self.body_mapper.hold_seconds:
+                return (int(round(self._active_palm[0])), int(round(self._active_palm[1])))
+            self._active_palm = None
+            self._active_palm_at = None
+            return None
+
+        if self._active_palm is None or self._active_palm_at is None:
+            smoothed = (float(point[0]), float(point[1]))
+        else:
+            alpha = self._effective_alpha(self.hand_alpha, now - self._active_palm_at)
+            smoothed = (
+                self._active_palm[0] + (point[0] - self._active_palm[0]) * alpha,
+                self._active_palm[1] + (point[1] - self._active_palm[1]) * alpha,
+            )
+        self._active_palm = smoothed
+        self._active_palm_at = now
+        return (int(round(smoothed[0])), int(round(smoothed[1])))
+
+    def _smooth_smile(self, score: float, now: float) -> float:
+        if self._smile_at is None:
+            self._smoothed_smile = score
+        else:
+            alpha = self._effective_alpha(self.face_alpha, now - self._smile_at)
+            self._smoothed_smile += (score - self._smoothed_smile) * alpha
+        self._smile_at = now
+        return self._smoothed_smile
+
+    @staticmethod
+    def _effective_alpha(alpha_at_30fps: float, elapsed: float) -> float:
+        alpha = min(1.0, max(0.0, float(alpha_at_30fps)))
+        if elapsed <= 0.0 or alpha <= 0.0:
+            return 0.0
+        if alpha >= 1.0:
+            return 1.0
+        return 1.0 - (1.0 - alpha) ** (elapsed * 30.0)
 
     @staticmethod
     def _px(landmark: _LandmarkPoint, width: int, height: int) -> tuple[int, int]:
-        return (int(landmark.x * width), int(landmark.y * height))
+        return (
+            min(width - 1, max(0, int(round(landmark.x * width)))),
+            min(height - 1, max(0, int(round(landmark.y * height)))),
+        )
 
     def _cooldown_ready(self, name: str, seconds: float) -> bool:
         return time.monotonic() - self.last_event_at.get(name, 0.0) >= seconds

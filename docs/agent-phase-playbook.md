@@ -86,11 +86,36 @@ flowchart LR
 - README gains a one-command showcase quick start
 - pushed
 
+### Phase 7
+
+- visible-person segmentation and full pose anchors added through feet
+- coordinate smoothing now uses the configured pose/hand/face values
+- offsets and pet size adapt to the visible person's shoulder scale
+- frame-rate-independent motion holds through tracking dropouts
+- dialogue movement remains active beyond subtitle display time
+- local, remote, tracking, and renderer share one anchor vocabulary
+
 ## Next Recommended Phases
 
-The core roadmap (Phases 1-6) is complete. Remaining work is maintenance and
-extension; candidate targets: real microphone + STT integration, voice persona
-tuning, and stress-testing the remote endpoint under live demo conditions.
+The core roadmap (Phases 1-7) is complete. Remaining work is maintenance and
+extension; the next target is hardening the existing microphone/STT/TTS turn
+lifecycle, followed by authored character action clips and remote stress tests.
+
+### Phase 8: Voice Turn Lifecycle
+
+Goal:
+- make microphone conversation feel intentional and recover safely
+
+Tasks:
+- prevent microphone capture while the pet is speaking
+- expose listening, transcribing, thinking, and speaking state
+- ignore empty transcripts and recover from per-turn failures
+- keep every network path away from the camera thread
+
+Done when:
+- the pet cannot transcribe its own voice
+- one bad voice turn does not kill later turns
+- camera tracking remains responsive throughout a slow remote turn
 
 ### Phase 4: Memory Expansion
 

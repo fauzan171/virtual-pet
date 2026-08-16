@@ -52,6 +52,23 @@ class LocalBrainTests(unittest.TestCase):
             anchors.add(response.movement.target_anchor)
         self.assertGreater(len(anchors), 3)
 
+    def test_local_point_gestures_choose_distinct_sides(self) -> None:
+        left = self.brain.generate(
+            context=self.context,
+            event=InteractionEvent("point_left"),
+            suggested_state="following",
+            is_idle_tick=False,
+        )
+        right = self.brain.generate(
+            context=self.context,
+            event=InteractionEvent("point_right"),
+            suggested_state="following",
+            is_idle_tick=False,
+        )
+
+        self.assertEqual(left.movement.target_anchor, "left_shoulder")
+        self.assertEqual(right.movement.target_anchor, "right_shoulder")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,119 +10,74 @@ import numpy as np
 
 from src.core.models import PetExpression, TrackingSnapshot
 from src.render.cartoon_sheet import CartoonPetSheet, composite_sprite
-
-
-# Per-animation movement feel: blend rate controls arrival speed, arc scale controls hop height.
-BLEND_RATES: dict[str, float] = {
-    "dash": 0.45,
-    "jump_to_shoulder": 0.50,
-    "happy_spin": 0.35,
-    "supernova": 0.30,
-    "spawn_burst": 0.35,
-    "bounce": 0.32,
-    "peek": 0.12,
-    "drift": 0.14,
-    "hover": 0.22,
-}
-ARC_SCALES: dict[str, float] = {
-    "jump_to_shoulder": 0.15,
-    "dash": 0.12,
-    "bounce": 0.12,
-    "happy_spin": 0.10,
-    "hover": 0.04,
-    "peek": 0.04,
-    "drift": 0.03,
-}
+from src.render.motion import MotionController, MotionPose
 
 
 class HoloPetRenderer:
-    def __init__(self, subtitle_y_offset: int = 60, skin: str = "fox") -> None:
+    def __init__(
+        self,
+        subtitle_y_offset: int = 60,
+        skin: str = "fox",
+        motion_config: dict | None = None,
+    ) -> None:
         self.subtitle_y_offset = subtitle_y_offset
         self._start_time = time.monotonic()
-        self._pet_position: tuple[int, int] | None = None
-        self._motion_speed: float = 0.0
         self._sheet = CartoonPetSheet(frame_size=192, skin=skin)
+        motion_config = motion_config or {}
+        self._motion = MotionController(
+            direct_confidence=float(motion_config.get("min_anchor_confidence", 0.25)),
+            dropout_hold_s=float(motion_config.get("anchor_hold_ms", 250)) / 1000.0,
+            max_dt_s=float(motion_config.get("max_frame_gap_ms", 100)) / 1000.0,
+            safe_margin_px=float(motion_config.get("safe_margin_px", 88)),
+            reference_body_scale_px=float(motion_config.get("reference_body_scale_px", 230)),
+            min_sprite_scale=float(motion_config.get("min_body_scale", 0.55)),
+            max_sprite_scale=float(motion_config.get("max_body_scale", 1.8)),
+        )
+        self._last_motion: MotionPose | None = None
 
     def render(self, frame: np.ndarray, tracking: TrackingSnapshot, expression: PetExpression, show_debug: bool) -> np.ndarray:
         canvas = frame.copy()
-        anchor = self._resolve_anchor(tracking, expression)
-        if anchor is not None and expression.state != "hidden":
-            new_position = self._smooth_move(anchor, expression.movement.speed, expression.animation)
-            if self._pet_position is not None:
-                self._motion_speed = math.hypot(new_position[0] - self._pet_position[0], new_position[1] - self._pet_position[1])
-            self._pet_position = new_position
-            self._draw_pet(canvas, self._pet_position, expression)
+        if expression.state != "hidden":
+            self._last_motion = self._motion.update(
+                tracking,
+                expression.movement,
+                expression.animation,
+                now=time.monotonic(),
+            )
+            if self._last_motion is not None:
+                center = (
+                    int(round(self._last_motion.position[0])),
+                    int(round(self._last_motion.position[1])),
+                )
+                self._draw_pet(canvas, center, expression, self._last_motion)
         self._draw_hud(canvas, tracking, expression)
         if show_debug:
-            self._draw_debug(canvas, tracking)
+            self._draw_debug(canvas, tracking, self._last_motion)
         return canvas
 
-    def _smooth_move(self, anchor: tuple[int, int], speed: float, animation: str = "hover") -> tuple[int, int]:
-        if self._pet_position is None:
-            return anchor
-        # ponytail: per-animation blend rate, not a tween — anchors track a live
-        # human, so a fixed-duration hop would lag a moving target.
-        base = BLEND_RATES.get(animation, 0.22)
-        blend = min(0.65, max(0.08, base * speed))
-        dx = anchor[0] - self._pet_position[0]
-        dy = anchor[1] - self._pet_position[1]
-        x = int(self._pet_position[0] + dx * blend)
-        y = int(self._pet_position[1] + dy * blend)
-        arc_scale = ARC_SCALES.get(animation, 0.08)
-        arc = int(min(30, math.hypot(dx, dy) * arc_scale) * math.sin(blend * math.pi))
-        return (x, y - arc)
-
-    def _resolve_anchor(self, tracking: TrackingSnapshot, expression: PetExpression) -> tuple[int, int] | None:
-        anchor_name = expression.movement.target_anchor
-        anchor_point = {
-            "right_shoulder": tracking.right_shoulder,
-            "left_shoulder": tracking.left_shoulder,
-            "active_palm": tracking.active_palm,
-            "nose": tracking.nose,
-            "left_elbow": tracking.left_elbow,
-            "right_elbow": tracking.right_elbow,
-            "left_hip": tracking.left_hip,
-            "right_hip": tracking.right_hip,
-            "left_knee": tracking.left_knee,
-            "right_knee": tracking.right_knee,
-            "left_wrist": tracking.left_wrist,
-            "right_wrist": tracking.right_wrist,
-        }.get(anchor_name)
-        if anchor_point is None:
-            anchor_point = self._fallback_anchor(tracking, expression.state)
-        if anchor_point is None:
-            return None
-        return (
-            anchor_point[0] + expression.movement.offset_x,
-            anchor_point[1] + expression.movement.offset_y,
-        )
-
-    @staticmethod
-    def _fallback_anchor(tracking: TrackingSnapshot, state: str) -> tuple[int, int] | None:
-        if state == "following":
-            # Carry on the hand; palm center is best but drops often, so wrists
-            # keep the pet glued to the hand even when fingers aren't resolved.
-            hand = tracking.active_palm or tracking.right_wrist or tracking.left_wrist
-            if hand is not None:
-                return (hand[0], hand[1] - 70)
-        if state in {"curious", "evolved"} and tracking.nose is not None:
-            y_offset = -150 if state == "evolved" else -60
-            return (tracking.nose[0] + (0 if state == "evolved" else 90), tracking.nose[1] + y_offset)
-        if tracking.right_shoulder is not None:
-            return (tracking.right_shoulder[0] + 110, tracking.right_shoulder[1] - 30)
-        if tracking.left_shoulder is not None:
-            return (tracking.left_shoulder[0] - 110, tracking.left_shoulder[1] - 30)
-        return None
-
-    def _draw_pet(self, canvas: np.ndarray, center: tuple[int, int], expression: PetExpression) -> None:
+    def _draw_pet(
+        self,
+        canvas: np.ndarray,
+        center: tuple[int, int],
+        expression: PetExpression,
+        motion: MotionPose,
+    ) -> None:
         t = time.monotonic() - self._start_time
-        bob = int(math.sin(t * 2.5) * (6 + expression.energy * 10))
-        center = (center[0], center[1] + bob)
-        sprite = self._sheet.frame(expression, t, motion_speed=self._motion_speed)
-        self._motion_speed *= 0.8
-        scale = 0.82 + expression.energy * 0.18 + expression.bond_level * 0.015
+        bob = int(math.sin(t * 2.5) * (6 + expression.energy * 10) * motion.sprite_scale)
+        normalized_motion = min(3.0, motion.speed_px_s / 180.0)
+        sprite = self._sheet.frame(expression, t, motion_speed=normalized_motion)
+        scale = (0.82 + expression.energy * 0.18 + expression.bond_level * 0.015) * motion.sprite_scale
         if expression.state == "evolved":
             scale += 0.08
+
+        height, width = canvas.shape[:2]
+        design_margin = int(round(self._motion.safe_margin_px * motion.sprite_scale))
+        margin_x = max(design_margin, int(math.ceil(sprite.shape[1] * scale * 0.5)))
+        margin_y = max(design_margin, int(math.ceil(sprite.shape[0] * scale * 0.5)))
+        center = (
+            min(width - margin_x, max(margin_x, center[0])) if width > margin_x * 2 else width // 2,
+            min(height - margin_y, max(margin_y, center[1] + bob)) if height > margin_y * 2 else height // 2,
+        )
         self._draw_particles(canvas, center, 48, expression.color, expression, t)
         composite_sprite(canvas, sprite, center, scale=scale)
 
@@ -176,26 +131,39 @@ class HoloPetRenderer:
         cv2.addWeighted(overlay, 0.55, canvas, 0.45, 0, dst=canvas)
         cv2.putText(canvas, expression.subtitle, (36, y0 + 42), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (235, 248, 255), 2, cv2.LINE_AA)
 
-    def _draw_debug(self, canvas: np.ndarray, tracking: TrackingSnapshot) -> None:
-        points = [
-            tracking.nose,
-            tracking.left_shoulder,
-            tracking.right_shoulder,
-            tracking.left_wrist,
-            tracking.right_wrist,
-            tracking.left_elbow,
-            tracking.right_elbow,
-            tracking.left_hip,
-            tracking.right_hip,
-            tracking.left_knee,
-            tracking.right_knee,
-            tracking.active_palm,
-        ]
+    def _draw_debug(
+        self,
+        canvas: np.ndarray,
+        tracking: TrackingSnapshot,
+        motion: MotionPose | None,
+    ) -> None:
+        points = set(tracking.pose_anchors.values())
+        if tracking.active_palm is not None:
+            points.add(tracking.active_palm)
+        if tracking.pointing_target is not None:
+            points.add(tracking.pointing_target)
         for point in points:
-            if point is not None:
-                cv2.circle(canvas, point, 5, (0, 255, 255), thickness=-1, lineType=cv2.LINE_AA)
+            cv2.circle(canvas, point, 5, (0, 255, 255), thickness=-1, lineType=cv2.LINE_AA)
+        if tracking.body_bounds is not None:
+            x0, y0, x1, y1 = tracking.body_bounds
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), (255, 190, 70), 2, cv2.LINE_AA)
+        if motion is not None:
+            target = (int(round(motion.target[0])), int(round(motion.target[1])))
+            cv2.drawMarker(canvas, target, (255, 80, 255), cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
         y = 126
         cv2.putText(canvas, f"confidence: {tracking.tracking_confidence:.2f}", (28, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        if motion is not None:
+            y += 22
+            cv2.putText(
+                canvas,
+                f"motion: {motion.tracking_state} -> {motion.resolved_anchor}",
+                (28, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (255, 210, 255),
+                1,
+                cv2.LINE_AA,
+            )
         for key, value in tracking.debug.items():
             y += 22
             cv2.putText(canvas, f"{key}: {value}", (28, y), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 230, 255), 1, cv2.LINE_AA)

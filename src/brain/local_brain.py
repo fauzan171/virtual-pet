@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.brain.base import BrainResponse, PetBrain, default_movement_for_state, wander_movement
+from src.brain.base import BrainResponse, PetBrain, default_movement_for_state, movement_for_event, wander_movement
 from src.core.models import InteractionEvent, PetContext
 
 
@@ -39,7 +39,7 @@ class LocalPetBrain(PetBrain):
             animation=animation,
             emote=emote,
             color=self.STATE_COLORS.get(suggested_state, self.STATE_COLORS["idle"]),
-            movement=default_movement_for_state(suggested_state),
+            movement=movement_for_event(event, suggested_state),
             response_source=self.provider_name,
         )
 

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.agent.schema import AgentActionPlan, MemoryUpdate, MovementCommand
+from src.agent.schema import AgentActionPlan, MemoryUpdate
 from src.brain.base import wander_movement
-from src.core.models import InteractionEvent, PetContext
+from src.core.models import InteractionEvent, MovementCommand, PetContext
 
 
 @dataclass(slots=True)
@@ -199,6 +199,7 @@ class HermesLikePlanner:
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="right_shoulder", offset_x=110, offset_y=-45, speed=1.3),
                 memory_update=MemoryUpdate(last_topic="gerak"),
+                movement_requested=True,
                 suggested_state="following",
             )
         if "bahu" in text and "kiri" in text:
@@ -210,9 +211,10 @@ class HermesLikePlanner:
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="left_shoulder", offset_x=-110, offset_y=-45, speed=1.3),
                 memory_update=MemoryUpdate(last_topic="gerak"),
+                movement_requested=True,
                 suggested_state="following",
             )
-        if "tangan" in text or "telapak" in text:
+        if "tangan" in text or ("telapak" in text and "kaki" not in text):
             return AgentActionPlan(
                 reply=self._with_name("Kasih telapakmu, aku hinggap di sana.", context),
                 emotion="curious",
@@ -221,6 +223,7 @@ class HermesLikePlanner:
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor="active_palm", offset_y=-40, speed=1.4),
                 memory_update=MemoryUpdate(last_topic="gerak"),
+                movement_requested=True,
                 suggested_state="following",
             )
         body_anchor = self._body_anchor_from(text)
@@ -234,6 +237,7 @@ class HermesLikePlanner:
                 color_rgb=(120, 220, 255),
                 movement=MovementCommand(target_anchor=anchor, offset_x=offset_x, offset_y=offset_y, speed=1.3),
                 memory_update=MemoryUpdate(last_topic="gerak"),
+                movement_requested=True,
                 suggested_state="following",
             )
         if "dekat" in text or "mendekat" in text or "ke hidung" in text:
@@ -245,6 +249,7 @@ class HermesLikePlanner:
                 color_rgb=(255, 200, 120),
                 movement=MovementCommand(target_anchor="nose", offset_x=65, offset_y=-40, speed=1.2),
                 memory_update=MemoryUpdate(last_topic="gerak"),
+                movement_requested=True,
                 suggested_state="curious",
             )
         if "topik terakhir" in text or "tadi kita" in text or "bahas apa" in text:
@@ -276,7 +281,16 @@ class HermesLikePlanner:
     @staticmethod
     def _body_anchor_from(text: str) -> tuple[str, int, int, str] | None:
         """Map whole-body words to anchors so the pet can perch anywhere on the body."""
-        parts = (("siku", "elbow", 80), ("lutut", "knee", 70), ("paha", "hip", 80), ("pinggang", "hip", 80), ("pinggul", "hip", 80))
+        parts = (
+            ("pergelangan kaki", "ankle", 45),
+            ("mata kaki", "ankle", 45),
+            ("telapak kaki", "foot", 35),
+            ("siku", "elbow", 80),
+            ("lutut", "knee", 70),
+            ("paha", "hip", 80),
+            ("pinggang", "hip", 80),
+            ("pinggul", "hip", 80),
+        )
         for word, anchor, offset in parts:
             if word not in text:
                 continue
@@ -285,6 +299,10 @@ class HermesLikePlanner:
             return (f"right_{anchor}", offset, -30, f"{word} kanan")
         if "kepala" in text or "ke pala" in text:
             return ("nose", 0, -130, "kepala")
+        if "dada" in text:
+            return ("chest", 0, -35, "dada")
+        if "perut" in text or "badan" in text:
+            return ("body_center", 0, -25, "badan")
         return None
 
     @staticmethod

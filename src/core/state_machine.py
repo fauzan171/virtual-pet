@@ -45,6 +45,7 @@ class HoloPetStateMachine:
             emote="idle",
             response_source="local",
         )
+        self.active_movement = self.last_expression.movement
         self.brain = brain or LocalPetBrain()
         self.cooldowns = {
             "greeting": CooldownGate(cooldowns.get("greeting_ms", 2500)),
@@ -68,6 +69,7 @@ class HoloPetStateMachine:
             self.interaction_count += 1
             self.last_event_name = event.name
             suggested_state = self._apply_event_transition(event, now)
+            self.cooldowns["idle"].mark(now)
         else:
             suggested_state = self.state
 
@@ -79,6 +81,11 @@ class HoloPetStateMachine:
         )
         if is_idle_tick:
             self.cooldowns["idle"].mark(now)
+        # Ordinary camera frames refresh mood/subtitle but must not erase the
+        # last physical command.  A new gesture, explicit dialogue command, or
+        # deliberate idle-wander tick owns the movement intent.
+        if event is not None or is_idle_tick:
+            self.active_movement = response.movement
         expression = self._build_expression(response, suggested_state, now, is_idle_tick=is_idle_tick)
         self.last_expression = expression
         return expression
@@ -165,7 +172,7 @@ class HoloPetStateMachine:
             bond_level=self.bond,
             energy=self.energy,
             emote=response.emote,
-            movement=response.movement,
+            movement=self.active_movement,
             response_source=response.response_source,
         )
 
@@ -175,6 +182,8 @@ class HoloPetStateMachine:
         self.state = next_state
         self.mood = plan.emotion
         self.last_event_name = "dialogue"
+        self.active_movement = plan.movement
+        self.cooldowns["idle"].mark(now)
         # ponytail: voice_line stays None here — the dialog loop's own TTS already
         # spoke the reply; re-speaking in the camera loop doubled every line.
         voice_line = None
@@ -188,7 +197,7 @@ class HoloPetStateMachine:
             bond_level=self.bond,
             energy=self.energy,
             emote=plan.emote,
-            movement=plan.movement,
+            movement=self.active_movement,
             response_source=plan.response_source,
         )
         self.last_expression = expression

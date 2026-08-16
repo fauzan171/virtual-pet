@@ -51,8 +51,12 @@ The runtime architecture is:
 - Remote planner defaults live in `configs/remote_brain.yaml`. Keep the secret in `HOLOPET_REMOTE_API_KEY`.
 - Voice is modular: `src/audio/listener.py`, `src/audio/stt.py`, and `src/audio/tts.py` provide local-safe scaffolding even when no microphone or remote provider is available.
 - Camera-only mode remains valid. If voice is unavailable, the pet still renders, moves, and subtitles normally.
-- `movement.target_anchor` now drives visible pet placement across `right_shoulder`, `left_shoulder`, `active_palm`, and `nose`.
+- `movement.target_anchor` drives named placement from head/chest/arms through ankles and feet, plus the active palm and pointing target.
+- Body placement is person-relative: visible-person segmentation supplies body bounds, all major pose anchors extend through ankles and feet, and offsets/pet size scale with shoulder width instead of fixed screen pixels.
+- Movement uses a frame-rate-independent controller, holds through short landmark dropouts, and keeps an explicit voice/gesture target active until a new movement intent arrives.
 - The HUD now shows `BRAIN: REMOTE`, `BRAIN: FALLBACK`, or `BRAIN: LOCAL` so you can see whether the reply came from the remote model or the local rescue path.
+
+Run with `--debug` to inspect the selected visible-person bounds, body anchors, resolved motion target, confidence, and direct/held/fallback/frozen tracking state. “Full body” means the full visible segmented person; a single webcam cannot recover limbs outside the frame or behind an occlusion.
 
 ## Run
 

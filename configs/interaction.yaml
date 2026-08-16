@@ -8,6 +8,22 @@ smoothing:
   hand_alpha: 0.35
   face_alpha: 0.40
 
+tracking:
+  segmentation_enabled: true
+  segmentation_threshold: 0.55
+  segmentation_min_area_ratio: 0.015
+  visibility_threshold: 0.45
+  anchor_hold_ms: 220
+
+motion:
+  anchor_hold_ms: 250
+  min_anchor_confidence: 0.25
+  reference_body_scale_px: 230
+  min_body_scale: 0.55
+  max_body_scale: 1.80
+  max_frame_gap_ms: 100
+  safe_margin_px: 88
+
 gestures:
   wave_min_frames: 8
   open_palm_hold_ms: 700

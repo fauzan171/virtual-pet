@@ -14,7 +14,7 @@ from src.agent.remote_planner import RemotePlanner, RemotePlannerConfig
 from src.audio.tts import RecordingTextToSpeech
 from src.brain.hermes_bridge import HermesBridgeBrain
 from src.brain.remote_bridge import RemoteBridgeBrain
-from src.core.models import InteractionEvent, PetContext, TrackingSnapshot
+from src.core.models import MOVEMENT_ANCHOR_NAMES, InteractionEvent, PetContext, TrackingSnapshot
 
 
 class AgentTests(unittest.TestCase):
@@ -105,9 +105,10 @@ class AgentTests(unittest.TestCase):
         )
         tracking = TrackingSnapshot(frame_size=(1280, 720), tracking_confidence=0.2)
 
-        result = loop.handle_text(context=context, utterance="ke bahu kanan", tracking=tracking)
-
-        self.assertIn("wobbly", result.plan.reply)
+        for utterance in ("ke bahu kanan", "ke siku kiri", "ke lutut kanan", "duduk di dada"):
+            result = loop.handle_text(context=context, utterance=utterance, tracking=tracking)
+            self.assertIn("tracking", result.plan.reply.lower(), utterance)
+            self.assertTrue(result.plan.movement_requested, utterance)
 
     def test_fallback_dialogue_stays_short_and_pet_like(self) -> None:
         coordinator = AgentCoordinator()
@@ -162,6 +163,9 @@ class AgentTests(unittest.TestCase):
             "ke siku kiri dong": "left_elbow",
             "nangkring di lutut kanan": "right_knee",
             "duduk di paha kiri": "left_hip",
+            "turun ke pergelangan kaki kiri": "left_ankle",
+            "hinggap di telapak kaki kanan": "right_foot",
+            "duduk di dada": "chest",
             "naik ke kepala": "nose",
         }
         for utterance, expected_anchor in cases.items():
@@ -242,6 +246,7 @@ class AgentTests(unittest.TestCase):
                             '"animation":"jump_to_shoulder","emote":"soft","color_rgb":[120,220,255],'
                             '"movement":{"target_anchor":"right_shoulder","offset_x":90,"offset_y":-40,"speed":1.2},'
                             '"memory_update":{"user_name":"Jadi","notes":["Met Jadi"]},"should_speak":true,'
+                            '"movement_requested":true,'
                             '"suggested_state":"following"}'
                         )
                     }
@@ -271,6 +276,7 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(plan.movement.target_anchor, "right_shoulder")
         self.assertEqual(plan.memory_update.user_name, "Jadi")
+        self.assertTrue(plan.movement_requested)
         self.assertEqual(plan.response_source, "remote")
 
     def test_remote_failure_reply_flags_local_source(self) -> None:
@@ -285,6 +291,84 @@ class AgentTests(unittest.TestCase):
 
         self.assertEqual(plan.response_source, "fallback")
         self.assertIn("otak lokal", plan.reply)
+        self.assertEqual(plan.movement.target_anchor, "right_shoulder")
+
+    def test_remote_movement_intent_is_inferred_when_model_omits_or_denies_it(self) -> None:
+        planner = RemotePlanner(
+            RemotePlannerConfig(model="fake-model", api_key="secret", api_base="https://example.invalid/v1")
+        )
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        for remote_value in (None, False):
+            response = {
+                "reply": "Sip.",
+                "movement": {"target_anchor": "left_elbow"},
+                "memory_update": {},
+            }
+            if remote_value is not None:
+                response["movement_requested"] = remote_value
+            payload = {
+                "choices": [{"message": {"content": __import__("json").dumps(response)}}]
+            }
+
+            with self.subTest(remote_value=remote_value), mock.patch.object(
+                planner,
+                "_chat_completion",
+                return_value=payload,
+            ):
+                plan = planner.plan(context=context, event=None, user_utterance="ke siku kiri")
+
+            self.assertTrue(plan.movement_requested)
+            self.assertEqual(plan.response_source, "remote")
+
+    def test_remote_cannot_hallucinate_movement_intent_for_small_talk(self) -> None:
+        planner = RemotePlanner(
+            RemotePlannerConfig(model="fake-model", api_key="secret", api_base="https://example.invalid/v1")
+        )
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        response = {
+            "reply": "Halo juga!",
+            "movement": {"target_anchor": "nose"},
+            "memory_update": {},
+            "movement_requested": True,
+        }
+        payload = {"choices": [{"message": {"content": __import__("json").dumps(response)}}]}
+
+        with mock.patch.object(planner, "_chat_completion", return_value=payload):
+            plan = planner.plan(context=context, event=None, user_utterance="halo")
+
+        self.assertFalse(plan.movement_requested)
+
+    def test_remote_parser_accepts_every_renderer_anchor(self) -> None:
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        for anchor in MOVEMENT_ANCHOR_NAMES:
+            plan = RemotePlanner._parse_plan(
+                {
+                    "reply": "Sip.",
+                    "color_rgb": [120, 220, 255],
+                    "movement": {"target_anchor": anchor},
+                },
+                context,
+            )
+            self.assertEqual(plan.movement.target_anchor, anchor)
+
+    def test_remote_parser_rejects_unknown_anchor(self) -> None:
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        plan = RemotePlanner._parse_plan(
+            {
+                "reply": "Sip.",
+                "color_rgb": [120, 220, 255],
+                "movement": {"target_anchor": "teleport_outside_frame"},
+            },
+            context,
+        )
         self.assertEqual(plan.movement.target_anchor, "right_shoulder")
 
     def test_remote_bridge_dialog_loop_uses_remote_memory(self) -> None:

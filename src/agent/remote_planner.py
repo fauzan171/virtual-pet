@@ -14,7 +14,13 @@ from dataclasses import dataclass
 
 from src.agent.hermes_like import HermesLikePlanner, HermesPlannerConfig
 from src.agent.schema import AgentActionPlan, MemoryUpdate
-from src.core.models import InteractionEvent, MovementCommand, PetContext
+from src.core.models import (
+    MOVEMENT_ANCHOR_NAMES,
+    SUPPORTED_MOVEMENT_ANCHORS,
+    InteractionEvent,
+    MovementCommand,
+    PetContext,
+)
 
 
 @dataclass(slots=True)
@@ -83,7 +89,21 @@ class RemotePlanner:
         user_utterance: str | None,
     ) -> AgentActionPlan:
         try:
-            return self._request_plan(context=context, event=event, user_utterance=user_utterance)
+            plan = self._request_plan(context=context, event=event, user_utterance=user_utterance)
+            # JSON-object mode does not guarantee that optional keys are
+            # present or truthful.  Reuse the trusted local intent parser so a
+            # remote omission cannot suppress poor-tracking safety feedback.
+            if user_utterance:
+                local_intent = self.fallback.plan(
+                    context=context,
+                    event=event,
+                    user_utterance=user_utterance,
+                )
+                # This flag describes what the user asked, not what the model
+                # chose to animate.  Reconcile both false negatives and false
+                # positives against the deterministic local parser.
+                plan.movement_requested = local_intent.movement_requested
+            return plan
         except (
             urllib.error.URLError,
             TimeoutError,
@@ -127,9 +147,11 @@ class RemotePlanner:
                         "Pick movement that feels expressive and cute: shoulder perches, nose hover, palm landing. "
                         "Avoid markdown. Avoid long explanations. Avoid sounding like customer support. "
                         "Return strict JSON with keys: "
-                        "reply, emotion, animation, emote, color_rgb, movement, memory_update, should_speak, suggested_state. "
+                        "reply, emotion, animation, emote, color_rgb, movement, memory_update, should_speak, movement_requested, suggested_state. "
                         "movement must include target_anchor, offset_x, offset_y, speed. "
-                        "target_anchor must be one of right_shoulder, left_shoulder, active_palm, nose. "
+                        "target_anchor must be one of: "
+                        f"{', '.join(MOVEMENT_ANCHOR_NAMES)}. "
+                        "movement_requested must be true only when the user explicitly asks you to move. "
                         "memory_update may include user_name, favorite_color, last_topic, notes. "
                         "Good tone examples: "
                         "'Sip, aku geser ke bahu kanan ya.' "
@@ -212,7 +234,7 @@ class RemotePlanner:
             offset_y=int(movement_data.get("offset_y", 0)),
             speed=float(movement_data.get("speed", 1.0)),
         )
-        if movement.target_anchor not in {"right_shoulder", "left_shoulder", "active_palm", "nose"}:
+        if movement.target_anchor not in SUPPORTED_MOVEMENT_ANCHORS:
             movement.target_anchor = "right_shoulder"
         memory_data = data.get("memory_update", {})
         memory = MemoryUpdate(
@@ -230,6 +252,7 @@ class RemotePlanner:
             movement=movement,
             memory_update=memory,
             should_speak=bool(data.get("should_speak", True)),
+            movement_requested=bool(data.get("movement_requested", memory.last_topic == "gerak")),
             suggested_state=str(data.get("suggested_state") or fallback_context.state),
             response_source="remote",
         )

@@ -25,5 +25,6 @@ class AgentActionPlan:
     movement: MovementCommand = field(default_factory=MovementCommand)
     memory_update: MemoryUpdate = field(default_factory=MemoryUpdate)
     should_speak: bool = True
+    movement_requested: bool = False
     suggested_state: str | None = None
     response_source: str = "local"

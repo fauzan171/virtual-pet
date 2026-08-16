@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 import queue
 import threading
@@ -96,9 +97,6 @@ def run_self_test(config: dict, brain_name: str, memory_path: str, utterances: l
 
 def run_remote_probe(brain_name: str, memory_path: str, utterances: list[str]) -> int:
     brain = build_brain(brain_name, memory_path)
-    if not isinstance(brain, (HermesBridgeBrain, RemoteBridgeBrain)):
-        print("error: probe mode requires a planner-backed brain such as remote or hermes")
-        return 1
     context = PetContext(
         state="happy",
         mood="joyful",
@@ -161,6 +159,57 @@ def _dialog_worker(loop, machine, tracking_holder: dict, results: "queue.Queue")
         results.put(result)
 
 
+def _select_active_expression(
+    camera_expression,
+    dialogue_expression,
+    *,
+    dialogue_until: float,
+    now: float,
+    interrupt_dialogue: bool,
+):
+    """Let a fresh physical gesture interrupt an older dialogue overlay."""
+
+    if interrupt_dialogue or (dialogue_expression is not None and now > dialogue_until):
+        dialogue_expression = None
+    if dialogue_expression is not None:
+        return dialogue_expression, dialogue_expression
+    return camera_expression, None
+
+
+def _merge_dialogue_with_gesture(dialogue_expression, camera_expression, *, has_gesture: bool):
+    """Keep fresh dialogue text while preserving same-frame local visuals."""
+
+    if not has_gesture:
+        return dialogue_expression
+    return replace(
+        dialogue_expression,
+        state=camera_expression.state,
+        color=camera_expression.color,
+        mood=camera_expression.mood,
+        movement=camera_expression.movement,
+        animation=camera_expression.animation,
+        bond_level=camera_expression.bond_level,
+        energy=camera_expression.energy,
+        emote=camera_expression.emote,
+    )
+
+
+def _preserve_gesture_ownership(machine, dialogue_expression, camera_expression, *, event_name: str):
+    """Restore state-machine ownership after applying a stale queued plan."""
+
+    merged = _merge_dialogue_with_gesture(
+        dialogue_expression,
+        camera_expression,
+        has_gesture=True,
+    )
+    machine.state = camera_expression.state
+    machine.mood = camera_expression.mood
+    machine.last_event_name = event_name
+    machine.active_movement = camera_expression.movement
+    machine.last_expression = merged
+    return merged
+
+
 def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
     cap = open_camera(args.camera_index, config)
     if not cap.isOpened():
@@ -171,7 +220,11 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
     tracker = GestureTracker(config)
     machine = HoloPetStateMachine(config["cooldowns"], brain=brain)
     skin = args.skin or config["render"].get("skin", "fox")
-    renderer = HoloPetRenderer(subtitle_y_offset=config["render"]["subtitle_y_offset"], skin=skin)
+    renderer = HoloPetRenderer(
+        subtitle_y_offset=config["render"]["subtitle_y_offset"],
+        skin=skin,
+        motion_config=config.get("motion"),
+    )
     voice = VoicePlayer(enabled=args.voice)
     dialogue_loop = None
     dialogue_listener = None
@@ -233,18 +286,32 @@ def run_camera_demo(args: argparse.Namespace, config: dict) -> int:
             dialog_tracking["tracking"] = tracking
             now = time.monotonic()
             expression = machine.process(tracking.fired_event, now=now, tracking_confidence=tracking.tracking_confidence)
+            dialog_result_applied = False
             try:
                 result = dialog_results.get_nowait()
                 dialogue_expression = machine.apply_dialog_plan(result.plan, now=now)
+                if tracking.fired_event is not None:
+                    # Camera gestures are latency-sensitive and own physical
+                    # motion.  A queued remote turn may still supply its fresh
+                    # subtitle, but must not erase that one-frame reaction.
+                    dialogue_expression = _preserve_gesture_ownership(
+                        machine,
+                        dialogue_expression,
+                        expression,
+                        event_name=tracking.fired_event.name,
+                    )
                 dialogue_until = now + 2.8
+                dialog_result_applied = True
                 voice.speak(dialogue_expression.voice_line)
             except queue.Empty:
                 pass
-            active_expression = expression
-            if dialogue_expression is not None and now <= dialogue_until:
-                active_expression = dialogue_expression
-            elif dialogue_expression is not None and now > dialogue_until:
-                dialogue_expression = None
+            active_expression, dialogue_expression = _select_active_expression(
+                expression,
+                dialogue_expression,
+                dialogue_until=dialogue_until,
+                now=now,
+                interrupt_dialogue=tracking.fired_event is not None and not dialog_result_applied,
+            )
             if active_expression is expression:
                 voice.speak(expression.voice_line)
             output = renderer.render(frame, tracking, active_expression, show_debug=args.debug)

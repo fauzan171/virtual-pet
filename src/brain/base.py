@@ -73,3 +73,13 @@ def default_movement_for_state(suggested_state: str) -> MovementCommand:
     if suggested_state == "evolved":
         return MovementCommand(target_anchor="nose", offset_y=-140, speed=0.9)
     return MovementCommand(target_anchor="right_shoulder", offset_x=110, offset_y=-30, speed=1.0)
+
+
+def movement_for_event(event: InteractionEvent, suggested_state: str) -> MovementCommand:
+    """Keep fast local gestures spatially meaningful without remote planning."""
+
+    if event.name == "point_left":
+        return MovementCommand(target_anchor="left_shoulder", offset_x=-120, offset_y=-30, speed=1.6)
+    if event.name == "point_right":
+        return MovementCommand(target_anchor="right_shoulder", offset_x=120, offset_y=-30, speed=1.6)
+    return default_movement_for_state(suggested_state)

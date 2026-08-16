@@ -70,7 +70,7 @@ class DialogueLoop:
             tracking_confidence=tracking_confidence,
         )
         plan = self.coordinator.handle(context=planning_context, event=None, user_utterance=utterance)
-        self._apply_tracking_feedback(plan, utterance, tracking_confidence)
+        self._apply_tracking_feedback(plan, tracking_confidence)
         if self.subtitle_sink is not None:
             self.subtitle_sink(plan.reply)
         if self.plan_sink is not None:
@@ -93,7 +93,6 @@ class DialogueLoop:
         return [self.handle_text(context=context, utterance=utterance, tracking=tracking) for utterance in utterances]
 
     @staticmethod
-    def _apply_tracking_feedback(plan: AgentActionPlan, utterance: str, tracking_confidence: float) -> None:
-        asks_for_motion = any(token in utterance.lower() for token in ("bahu", "tangan", "palm", "nose", "hidung"))
-        if asks_for_motion and tracking_confidence < 0.35:
-            plan.reply = "I can scoot over, but tracking feels wobbly right now."
+    def _apply_tracking_feedback(plan: AgentActionPlan, tracking_confidence: float) -> None:
+        if plan.movement_requested and tracking_confidence < 0.35:
+            plan.reply = "Aku mau bergerak, tapi tracking tubuhmu lagi goyang sedikit."
