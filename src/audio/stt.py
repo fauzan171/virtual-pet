@@ -11,7 +11,7 @@ import numpy as np
 from src.audio.listener import AudioCapture
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class TranscriptionResult:
     text: str
     confidence: float = 1.0
@@ -24,13 +24,18 @@ class SpeechToText:
 
 
 class MockSpeechToText(SpeechToText):
-    """Prefers a scripted prompt and falls back to UTF-8 decoded bytes."""
+    """Transcribes explicit scripted text without guessing from audio bytes.
+
+    Microphone WAV data can contain byte sequences that happen to be valid
+    UTF-8.  Treating those bytes as a prompt can make the pet plan nonsense
+    commands when Whisper is unavailable, so raw captures deliberately produce
+    an empty, low-confidence transcript.
+    """
 
     def transcribe(self, capture: AudioCapture) -> TranscriptionResult:
         if capture.prompt_text:
             return TranscriptionResult(text=capture.prompt_text, confidence=1.0, provider="mock-scripted")
-        text = capture.audio_bytes.decode("utf-8", errors="ignore").strip() or "(silence)"
-        return TranscriptionResult(text=text, confidence=0.55, provider="mock-bytes")
+        return TranscriptionResult(text="", confidence=0.0, provider="mock-unsupported-audio")
 
 
 class WhisperSpeechToText(SpeechToText):

@@ -39,6 +39,12 @@ cooldowns:
   evolve_ms: 6000
   idle_chatter_ms: 12000
 
+voice:
+  capture_timeout_s: 0.35
+  min_transcript_confidence: 0.45
+  failure_backoff_s: 0.25
+  post_speech_guard_ms: 350
+
 render:
   pet_idle_anchor: right_shoulder
   subtitle_y_offset: 60

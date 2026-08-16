@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from src.agent.coordinator import AgentCoordinator
@@ -91,6 +95,24 @@ class AgentTests(unittest.TestCase):
             self.assertIn("Jadi", second.plan.reply)
             self.assertEqual(tts.spoken[-1], second.plan.reply)
             self.assertTrue(memory_path.exists())
+
+    def test_dialog_loop_refuses_restart_while_old_voice_worker_is_alive(self) -> None:
+        loop = DialogueLoop(coordinator=AgentCoordinator())
+        old_session = SimpleNamespace(
+            running=True,
+            stop=mock.Mock(),
+            join=mock.Mock(),
+        )
+        loop.voice_session = old_session
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "still stopping"):
+            loop.start_voice_session(context_supplier=lambda: context)
+
+        old_session.stop.assert_called_once_with()
+        old_session.join.assert_called_once_with(timeout=1.0)
 
     def test_dialog_loop_mentions_tracking_when_wobbly(self) -> None:
         coordinator = AgentCoordinator()
@@ -269,9 +291,7 @@ class AgentTests(unittest.TestCase):
             interaction_count=4,
             last_event="smile",
         )
-        fake_completed = mock.Mock()
-        fake_completed.stdout = __import__("json").dumps(payload)
-        with mock.patch("subprocess.run", return_value=fake_completed):
+        with mock.patch.object(planner, "_chat_completion", return_value=payload):
             plan = planner.plan(context=context, event=None, user_utterance="ke bahu kanan")
 
         self.assertEqual(plan.movement.target_anchor, "right_shoulder")
@@ -292,6 +312,126 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(plan.response_source, "fallback")
         self.assertIn("otak lokal", plan.reply)
         self.assertEqual(plan.movement.target_anchor, "right_shoulder")
+
+    def test_remote_body_drip_falls_back_within_total_deadline(self) -> None:
+        release_read = threading.Event()
+        read_started = threading.Event()
+        response_closed = threading.Event()
+
+        class DrippingResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                self.close()
+                return False
+
+            def close(self) -> None:
+                response_closed.set()
+                release_read.set()
+
+            def read(self) -> bytes:
+                read_started.set()
+                # Simulate a transport whose read keeps receiving tiny pieces
+                # and therefore never reaches urllib's inactivity timeout.
+                while not release_read.wait(0.005):
+                    pass
+                return b'{"choices": []}'
+
+        planner = RemotePlanner(
+            RemotePlannerConfig(
+                model="fake-model",
+                api_key="secret",
+                api_base="https://example.invalid/v1",
+                timeout_s=0.05,
+            )
+        )
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3,
+        )
+
+        started_at = time.monotonic()
+        try:
+            with mock.patch("urllib.request.urlopen", return_value=DrippingResponse()) as urlopen:
+                plan = planner.plan(context=context, event=None, user_utterance="halo")
+            elapsed_s = time.monotonic() - started_at
+            self.assertTrue(read_started.is_set())
+            urlopen.assert_called_once()
+            self.assertTrue(response_closed.wait(0.2))
+        finally:
+            release_read.set()
+
+        self.assertEqual(plan.response_source, "fallback")
+        self.assertLess(elapsed_s, 0.35)
+
+    def test_remote_transport_keeps_secret_and_prompt_off_process_argv(self) -> None:
+        secret_key = "test-api-key-that-must-not-enter-argv"
+        secret_prompt = "memory: user's private favorite is nebula blue"
+        response_body = json.dumps({"ok": True}).encode("utf-8")
+        captured_request: dict[str, object] = {}
+
+        class StaticResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self) -> bytes:
+                return response_body
+
+        def fake_urlopen(request, *, timeout):
+            captured_request["request"] = request
+            captured_request["timeout"] = timeout
+            return StaticResponse()
+
+        planner = RemotePlanner(
+            RemotePlannerConfig(
+                model="fake-model",
+                api_key=secret_key,
+                api_base="https://example.invalid/v1",
+                timeout_s=0.5,
+            )
+        )
+        payload = {"messages": [{"role": "user", "content": secret_prompt}]}
+
+        with (
+            mock.patch("subprocess.Popen") as popen,
+            mock.patch("subprocess.run") as subprocess_run,
+            mock.patch("urllib.request.urlopen", side_effect=fake_urlopen),
+        ):
+            result = planner._chat_completion(payload)
+
+        self.assertEqual(result, {"ok": True})
+        popen.assert_not_called()
+        subprocess_run.assert_not_called()
+        request = captured_request["request"]
+        self.assertEqual(request.get_header("Authorization"), f"Bearer {secret_key}")
+        self.assertIn(secret_prompt, request.data.decode("utf-8"))
+
+    def test_malformed_remote_response_shapes_fall_back_safely(self) -> None:
+        planner = RemotePlanner(
+            RemotePlannerConfig(model="fake-model", api_key="secret", api_base="https://example.invalid/v1")
+        )
+        context = PetContext(
+            state="happy", mood="joyful", bond=2, energy=0.6, interaction_count=3, last_event="smile",
+        )
+        malformed_payloads = (
+            {"choices": []},
+            {"choices": [{"message": {"content": None}}]},
+            {"choices": None},
+        )
+
+        for payload in malformed_payloads:
+            with self.subTest(payload=payload), mock.patch.object(
+                planner,
+                "_chat_completion",
+                return_value=payload,
+            ):
+                plan = planner.plan(context=context, event=None, user_utterance="ke bahu kanan")
+
+            self.assertEqual(plan.response_source, "fallback")
+            self.assertEqual(plan.movement.target_anchor, "right_shoulder")
 
     def test_remote_movement_intent_is_inferred_when_model_omits_or_denies_it(self) -> None:
         planner = RemotePlanner(

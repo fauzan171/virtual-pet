@@ -92,6 +92,30 @@ class RendererIntegrationTests(unittest.TestCase):
 
         self.assertGreater(int(output[80, 100].sum()), 0)
 
+    def test_voice_lifecycle_status_is_visible_in_hud_and_debug(self) -> None:
+        from unittest import mock
+
+        import numpy as np
+
+        from src.core.models import TrackingSnapshot
+        from src.render.renderer import HoloPetRenderer
+
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracking = TrackingSnapshot(frame_size=(640, 480), pose_anchors={})
+
+        with mock.patch("src.render.renderer.cv2.putText", wraps=__import__("cv2").putText) as put_text:
+            HoloPetRenderer().render(
+                frame,
+                tracking,
+                self._expression(),
+                show_debug=True,
+                voice_status="thinking",
+            )
+
+        labels = [call.args[1] for call in put_text.call_args_list]
+        self.assertIn("VOICE: THINKING", labels)
+        self.assertIn("voice: thinking", labels)
+
     def test_bob_and_evolved_scale_keep_sprite_inside_top_edge(self) -> None:
         import math
         from unittest import mock

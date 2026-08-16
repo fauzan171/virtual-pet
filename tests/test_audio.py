@@ -42,6 +42,14 @@ class AudioAbstractionTests(unittest.TestCase):
 
         self.assertEqual(result.text, "move left")
 
+    def test_mock_stt_never_decodes_raw_audio_bytes_as_a_prompt(self) -> None:
+        stt = MockSpeechToText()
+
+        result = stt.transcribe(AudioCapture(audio_bytes=b"RIFF fake wav ke bahu kanan"))
+
+        self.assertEqual(result.text, "")
+        self.assertEqual(result.confidence, 0.0)
+
     def test_recording_tts_captures_spoken_lines(self) -> None:
         tts = RecordingTextToSpeech()
 

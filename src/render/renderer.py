@@ -35,7 +35,14 @@ class HoloPetRenderer:
         )
         self._last_motion: MotionPose | None = None
 
-    def render(self, frame: np.ndarray, tracking: TrackingSnapshot, expression: PetExpression, show_debug: bool) -> np.ndarray:
+    def render(
+        self,
+        frame: np.ndarray,
+        tracking: TrackingSnapshot,
+        expression: PetExpression,
+        show_debug: bool,
+        voice_status: str | None = None,
+    ) -> np.ndarray:
         canvas = frame.copy()
         if expression.state != "hidden":
             self._last_motion = self._motion.update(
@@ -50,9 +57,9 @@ class HoloPetRenderer:
                     int(round(self._last_motion.position[1])),
                 )
                 self._draw_pet(canvas, center, expression, self._last_motion)
-        self._draw_hud(canvas, tracking, expression)
+        self._draw_hud(canvas, tracking, expression, voice_status=voice_status)
         if show_debug:
-            self._draw_debug(canvas, tracking, self._last_motion)
+            self._draw_debug(canvas, tracking, self._last_motion, voice_status=voice_status)
         return canvas
 
     def _draw_pet(
@@ -99,7 +106,14 @@ class HoloPetRenderer:
             size = 3 if idx % 2 == 0 else 2
             cv2.circle(canvas, (px, py), size, color, thickness=-1, lineType=cv2.LINE_AA)
 
-    def _draw_hud(self, canvas: np.ndarray, tracking: TrackingSnapshot, expression: PetExpression) -> None:
+    def _draw_hud(
+        self,
+        canvas: np.ndarray,
+        tracking: TrackingSnapshot,
+        expression: PetExpression,
+        *,
+        voice_status: str | None,
+    ) -> None:
         height, width = canvas.shape[:2]
         overlay = canvas.copy()
         cv2.rectangle(overlay, (18, 18), (width - 18, 90), (10, 24, 34), thickness=-1)
@@ -115,6 +129,18 @@ class HoloPetRenderer:
         else:
             source_label, source_color = source.upper(), (200, 238, 255)
         cv2.putText(canvas, f"BRAIN: {source_label}", (32, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.5, source_color, 1, cv2.LINE_AA)
+        if voice_status:
+            voice_label = voice_status.replace("_", " ").upper()
+            cv2.putText(
+                canvas,
+                f"VOICE: {voice_label}",
+                (420, 102),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (170, 245, 210),
+                1,
+                cv2.LINE_AA,
+            )
 
         bar_x0 = width - 260
         bar_x1 = width - 40
@@ -136,6 +162,8 @@ class HoloPetRenderer:
         canvas: np.ndarray,
         tracking: TrackingSnapshot,
         motion: MotionPose | None,
+        *,
+        voice_status: str | None,
     ) -> None:
         points = set(tracking.pose_anchors.values())
         if tracking.active_palm is not None:
@@ -152,6 +180,18 @@ class HoloPetRenderer:
             cv2.drawMarker(canvas, target, (255, 80, 255), cv2.MARKER_CROSS, 18, 2, cv2.LINE_AA)
         y = 126
         cv2.putText(canvas, f"confidence: {tracking.tracking_confidence:.2f}", (28, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+        if voice_status:
+            y += 22
+            cv2.putText(
+                canvas,
+                f"voice: {voice_status}",
+                (28, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.48,
+                (170, 245, 210),
+                1,
+                cv2.LINE_AA,
+            )
         if motion is not None:
             y += 22
             cv2.putText(

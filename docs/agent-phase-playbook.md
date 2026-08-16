@@ -117,6 +117,23 @@ Done when:
 - one bad voice turn does not kill later turns
 - camera tracking remains responsive throughout a slow remote turn
 
+Implemented:
+- one `VoiceSession` owns microphone capture and TTS playback
+- voice state is visible as listening, transcribing, thinking, speaking, or error
+- playback completion plus an acoustic guard prevents self-transcription
+- malformed remote replies and per-turn audio failures recover to safe local behavior
+- OpenAI/remote dialogue stays on the worker while camera reactions stay local
+
+### Phase 9: Authored Character Actions
+
+Goal:
+- replace generic animation labels with intentional enter/loop/exit action clips
+
+Tasks:
+- give perch, dash, spin, orbit, and landing their own timed transforms
+- preserve Phase 7 motion continuity while actions transition
+- add deterministic clip-progress tests before visual rehearsal
+
 ### Phase 4: Memory Expansion
 
 Goal:

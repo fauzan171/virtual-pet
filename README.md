@@ -49,7 +49,8 @@ The runtime architecture is:
 - Core demo behavior is local-first and does not require internet access.
 - Hermes memory persists to `data/pet_memory.json` by default and can be redirected with `--memory-path`.
 - Remote planner defaults live in `configs/remote_brain.yaml`. Keep the secret in `HOLOPET_REMOTE_API_KEY`.
-- Voice is modular: `src/audio/listener.py`, `src/audio/stt.py`, and `src/audio/tts.py` provide local-safe scaffolding even when no microphone or remote provider is available.
+- Voice is modular: `src/audio/listener.py`, `src/audio/stt.py`, `src/audio/tts.py`, and `src/audio/session.py` provide local-safe capture, transcription, half-duplex turn control, and playback.
+- Voice turns expose `LISTENING`, `TRANSCRIBING`, `THINKING`, `SPEAKING`, and `ERROR` in the HUD. The microphone stays closed while HoloPet speaks, and a failed turn cannot kill the worker.
 - Camera-only mode remains valid. If voice is unavailable, the pet still renders, moves, and subtitles normally.
 - `movement.target_anchor` drives named placement from head/chest/arms through ankles and feet, plus the active palm and pointing target.
 - Body placement is person-relative: visible-person segmentation supplies body bounds, all major pose anchors extend through ankles and feet, and offsets/pet size scale with shoulder width instead of fixed screen pixels.
@@ -96,21 +97,34 @@ Optional voice mode on macOS:
 ./run_holopet.sh --voice
 ```
 
+Real microphone conversation (local Whisper STT plus the selected dialogue brain):
+
+```bash
+./run_holopet.sh --brain remote --mic --voice
+```
+
+If the microphone or Whisper cannot initialize, HoloPet falls back to typed
+dialogue instead of treating raw WAV bytes as text. macOS `say` is used for
+spoken replies; camera tracking continues while the dialogue brain is thinking.
+
 Optional AI model mode:
 
 ```bash
 export OPENAI_API_KEY=your_key_here
 export HOLOPET_OPENAI_MODEL=gpt-4.1-mini
-./run_holopet.sh --brain openai --voice
+./run_holopet.sh --brain openai --dialogue-stdin --voice
 ```
 
-If the API is unavailable, HoloPet falls back to the local brain automatically.
+OpenAI is used only for dialogue on the background worker; camera gestures stay
+local and responsive. If the API is unavailable, HoloPet falls back to the
+local dialogue brain automatically. Use `--mic --voice` instead of
+`--dialogue-stdin --voice` for real microphone conversation.
 
 Recommended remote pet mode:
 
 ```bash
 export HOLOPET_REMOTE_API_KEY=your_key_here
-./run_holopet.sh --brain remote --voice
+./run_holopet.sh --brain remote --mic --voice
 ```
 
 Live dialogue during the camera demo (type lines in the terminal):
@@ -144,6 +158,7 @@ What `hermes` adds today:
 - `src/audio/listener.py`: microphone capture boundary with mock and null listeners for self-test flows
 - `src/audio/stt.py`: pluggable speech-to-text interface with a local mock fallback
 - `src/audio/tts.py`: text-to-speech interface with macOS `say` support and test doubles
+- `src/audio/session.py`: half-duplex voice turn lifecycle, status, cancellation, and per-turn recovery
 - `src/agent/persistence.py`: JSON-backed save and load for memory and session state
 - `src/agent/dialog_loop.py`: utterance-to-plan loop that routes subtitle, movement, and voice actions
 

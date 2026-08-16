@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from pathlib import Path
-import shutil
+import queue
 import socket
-import subprocess
+import threading
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from src.agent.hermes_like import HermesLikePlanner, HermesPlannerConfig
@@ -39,6 +42,10 @@ class RemotePlanner:
     def __init__(self, config: RemotePlannerConfig) -> None:
         self.config = config
         self.fallback = HermesLikePlanner(HermesPlannerConfig(persona=config.persona))
+        # A timed-out urllib call cannot be killed safely from another Python
+        # thread. Keep at most one transport alive so a stalled peer cannot
+        # create an unbounded collection of abandoned request workers.
+        self._request_slot = threading.Lock()
 
     @classmethod
     def from_env(cls) -> "RemotePlanner | None":
@@ -109,10 +116,11 @@ class RemotePlanner:
             TimeoutError,
             socket.timeout,
             OSError,
-            subprocess.CalledProcessError,
-            subprocess.TimeoutExpired,
             ValueError,
             KeyError,
+            IndexError,
+            TypeError,
+            AttributeError,
             json.JSONDecodeError,
         ):
             plan = self.fallback.plan(context=context, event=event, user_utterance=user_utterance)
@@ -188,28 +196,118 @@ class RemotePlanner:
         return self._parse_plan(data=data, fallback_context=context)
 
     def _chat_completion(self, payload: dict) -> dict:
-        if shutil.which("curl"):
-            return self._chat_completion_with_curl(payload)
-        return self._chat_completion_with_urllib(payload)
+        # Keep API keys and prompt/memory content out of process argv.  urllib
+        # sends both in request headers/body without exposing them to `ps`.
+        # urllib's timeout is an inactivity timeout, so a peer that drips bytes
+        # can otherwise keep a read alive forever. A daemon worker plus a
+        # monotonic caller-side deadline makes the planner return on time even
+        # when the underlying socket does not cooperate.
+        timeout_s = float(self.config.timeout_s)
+        if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+            raise ValueError("remote timeout_s must be a positive finite number")
+        if not self._request_slot.acquire(blocking=False):
+            raise TimeoutError("previous remote request is still stopping")
 
-    def _chat_completion_with_curl(self, payload: dict) -> dict:
-        command = [
-            "curl",
-            "-sS",
-            "--max-time",
-            str(int(self.config.timeout_s)),
-            "-H",
-            f"Authorization: Bearer {self.config.api_key}",
-            "-H",
-            "Content-Type: application/json",
-            f"{self.config.api_base.rstrip('/')}/chat/completions",
-            "-d",
-            json.dumps(payload),
-        ]
-        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=self.config.timeout_s + 1)
-        return json.loads(completed.stdout)
+        deadline = time.monotonic() + timeout_s
+        outcome: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+        cancel_requested = threading.Event()
+        response_lock = threading.Lock()
+        active_response: list[object] = []
 
-    def _chat_completion_with_urllib(self, payload: dict) -> dict:
+        def close_response_in_background(resp: object) -> None:
+            close = getattr(resp, "close", None)
+            if not callable(close):
+                return
+
+            def close_worker() -> None:
+                try:
+                    close()
+                except Exception:
+                    pass
+
+            threading.Thread(
+                target=close_worker,
+                name="holopet-remote-close",
+                daemon=True,
+            ).start()
+
+        def register_response(resp: object) -> None:
+            with response_lock:
+                should_abort = cancel_requested.is_set()
+                if not should_abort:
+                    active_response[:] = [resp]
+            if should_abort:
+                close_response_in_background(resp)
+
+        def unregister_response(resp: object) -> None:
+            with response_lock:
+                if active_response and active_response[0] is resp:
+                    active_response.clear()
+
+        def cancel_transport() -> None:
+            cancel_requested.set()
+            with response_lock:
+                resp = active_response.pop() if active_response else None
+            if resp is not None:
+                # close() is normally quick and wakes a blocked read, but keep
+                # it off the deadline-sensitive caller thread just in case.
+                close_response_in_background(resp)
+
+        def request_worker() -> None:
+            try:
+                try:
+                    value: object = self._chat_completion_with_urllib(
+                        payload,
+                        deadline=deadline,
+                        cancel_event=cancel_requested,
+                        register_response=register_response,
+                        unregister_response=unregister_response,
+                    )
+                    result = (True, value)
+                except Exception as exc:  # relay the transport error to plan()
+                    result = (False, exc)
+                outcome.put_nowait(result)
+            finally:
+                self._request_slot.release()
+
+        worker = threading.Thread(
+            target=request_worker,
+            name="holopet-remote-request",
+            daemon=True,
+        )
+        try:
+            worker.start()
+        except BaseException:
+            self._request_slot.release()
+            raise
+
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            cancel_transport()
+            raise TimeoutError("remote request exceeded its total deadline")
+        try:
+            succeeded, value = outcome.get(timeout=remaining_s)
+        except queue.Empty as exc:
+            cancel_transport()
+            raise TimeoutError("remote request exceeded its total deadline") from exc
+
+        if succeeded:
+            if not isinstance(value, dict):
+                raise TypeError("remote response must be a JSON object")
+            return value
+        if isinstance(value, BaseException):
+            raise value
+        raise RuntimeError("remote request failed without an exception")
+
+    def _chat_completion_with_urllib(
+        self,
+        payload: dict,
+        *,
+        deadline: float,
+        cancel_event: threading.Event,
+        register_response: Callable[[object], None],
+        unregister_response: Callable[[object], None],
+    ) -> dict:
         body = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             f"{self.config.api_base.rstrip('/')}/chat/completions",
@@ -220,8 +318,46 @@ class RemotePlanner:
             },
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=self.config.timeout_s) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        remaining_s = deadline - time.monotonic()
+        if remaining_s <= 0.0:
+            raise TimeoutError("remote request exceeded its total deadline")
+        with urllib.request.urlopen(req, timeout=remaining_s) as resp:
+            register_response(resp)
+            try:
+                if cancel_event.is_set():
+                    raise TimeoutError("remote request exceeded its total deadline")
+                raw_body = self._read_response_body(
+                    resp,
+                    deadline=deadline,
+                    cancel_event=cancel_event,
+                )
+                return json.loads(raw_body.decode("utf-8"))
+            finally:
+                unregister_response(resp)
+
+    @staticmethod
+    def _read_response_body(
+        resp: object,
+        *,
+        deadline: float,
+        cancel_event: threading.Event,
+    ) -> bytes:
+        """Read incrementally when supported so byte-drip responses self-stop."""
+
+        read1 = getattr(resp, "read1", None)
+        if not callable(read1):
+            # The outer worker deadline still protects the caller for simple
+            # response doubles and unusual urllib-compatible transports.
+            return resp.read()  # type: ignore[attr-defined, no-any-return]
+
+        chunks: list[bytes] = []
+        while True:
+            if cancel_event.is_set() or time.monotonic() >= deadline:
+                raise TimeoutError("remote response body exceeded its total deadline")
+            chunk = read1(64 * 1024)
+            if not chunk:
+                return b"".join(chunks)
+            chunks.append(chunk)
 
     @staticmethod
     def _parse_plan(data: dict, fallback_context: PetContext) -> AgentActionPlan:

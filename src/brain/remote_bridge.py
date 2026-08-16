@@ -24,6 +24,8 @@ class RemoteBridgeBrain(PetBrain):
         api_base: str,
         memory_path: str | Path | None = None,
         persona: str = "playful hologram fox",
+        timeout_s: float = 8.0,
+        api_key_env: str = "HOLOPET_REMOTE_API_KEY",
     ) -> None:
         planner = RemotePlanner(
             RemotePlannerConfig(
@@ -31,6 +33,8 @@ class RemoteBridgeBrain(PetBrain):
                 api_key=api_key,
                 api_base=api_base,
                 persona=persona,
+                timeout_s=timeout_s,
+                api_key_env=api_key_env,
             )
         )
         persistence = JsonAgentPersistence(memory_path) if memory_path is not None else None
@@ -48,6 +52,8 @@ class RemoteBridgeBrain(PetBrain):
             api_base=planner.config.api_base,
             memory_path=memory_path,
             persona=planner.config.persona,
+            timeout_s=planner.config.timeout_s,
+            api_key_env=planner.config.api_key_env,
         )
 
     def generate(
