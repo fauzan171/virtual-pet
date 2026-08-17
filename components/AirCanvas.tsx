@@ -13,6 +13,8 @@ import StatusBanner from './StatusBanner';
 import DebugPanel from './DebugPanel';
 import CameraPreview from './CameraPreview';
 import LoadingExperience from './LoadingExperience';
+import StylePicker from './StylePicker';
+import { STYLES, type StyleKey } from '@/lib/prompt';
 
 export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
@@ -25,6 +27,9 @@ export default function AirCanvas() {
   const [fps, setFps] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [sketchUrl, setSketchUrl] = useState<string | null>(null);
+  const [selectedStyle, setSelectedStyle] = useState<StyleKey | null>(null);
+  const selectedStyleRef = useRef<StyleKey | null>(null);
+  const [hoveredStyle, setHoveredStyle] = useState<StyleKey | null>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [debugFrame, setDebugFrame] = useState<HandFrame | null>(null);
 
@@ -44,6 +49,8 @@ export default function AirCanvas() {
   });
   const lastClickRef = useRef<Record<ButtonId, number>>({ UNDO: 0, CLEAR: 0, GENERATE: 0 });
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const styleRectsRef = useRef<Partial<Record<StyleKey, DOMRect | null>>>({});
+  const lastStyleClickRef = useRef(0);
 
   // MotionValues — cursor position updates without React re-render
   const cursorX = useMotionValue(0);
@@ -93,6 +100,7 @@ export default function AirCanvas() {
       setState('GENERATING');
       const form = new FormData();
       form.append('image', blob, 'sketch.png');
+      if (selectedStyleRef.current) form.append('style', selectedStyleRef.current);
       const res = await fetch('/api/generate', { method: 'POST', body: form });
       if (!res.ok) throw new Error('API error');
       const data = await res.json();
@@ -117,6 +125,8 @@ export default function AirCanvas() {
     setResultUrl(null);
     if (sketchUrl) URL.revokeObjectURL(sketchUrl);
     setSketchUrl(null);
+    setSelectedStyle(null);
+    selectedStyleRef.current = null;
     setClearConfirming(false);
     setState('READY');
     setBanner(null);
@@ -139,18 +149,36 @@ export default function AirCanvas() {
     return null;
   }, []);
 
+  const hitTestStyle = useCallback((x: number, y: number): StyleKey | null => {
+    for (const key of Object.keys(STYLES) as StyleKey[]) {
+      const rect = styleRectsRef.current[key];
+      if (rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+        return key;
+      }
+    }
+    return null;
+  }, []);
+
   const handlePinchClick = useCallback(
     (x: number, y: number) => {
+      const now = Date.now();
+      const style = hitTestStyle(x, y);
+      if (style) {
+        if (now - lastStyleClickRef.current < BUTTON_DEBOUNCE_MS) return;
+        lastStyleClickRef.current = now;
+        setSelectedStyle(style);
+        selectedStyleRef.current = style;
+        return;
+      }
       const id = hitTest(x, y);
       if (!id) return;
-      const now = Date.now();
       if (now - lastClickRef.current[id] < BUTTON_DEBOUNCE_MS) return;
       lastClickRef.current[id] = now;
       if (id === 'UNDO') triggerUndo();
       else if (id === 'CLEAR') triggerClear();
       else if (id === 'GENERATE') triggerGenerate();
     },
-    [hitTest, triggerUndo, triggerClear, triggerGenerate]
+    [hitTest, hitTestStyle, triggerUndo, triggerClear, triggerGenerate]
   );
 
   // ─── Keyboard failsafes ─────────────────────────────────────────────────────
@@ -246,8 +274,13 @@ export default function AirCanvas() {
         }
       }
 
+      // Suppress drawing while the cursor is over a virtual control
+      const overControl =
+        hitTest(frame.cursor.x, frame.cursor.y) !== null ||
+        hitTestStyle(frame.cursor.x, frame.cursor.y) !== null;
+
       // Drawing
-      if (stateRef.current === 'DRAWING' && frame.detected) {
+      if (stateRef.current === 'DRAWING' && frame.detected && !overControl) {
         const ctx = drawing.getCtx();
         if (frame.pinching) {
           if (!currentStrokeRef.current) {
@@ -263,12 +296,17 @@ export default function AirCanvas() {
           currentStrokeRef.current = null;
           setStrokeCount(strokesRef.current.length);
         }
+      } else if (currentStrokeRef.current) {
+        // Cursor left the canvas area or moved over a control — commit the stroke
+        strokesRef.current.push(currentStrokeRef.current);
+        currentStrokeRef.current = null;
+        setStrokeCount(strokesRef.current.length);
       }
 
       // Button hover + click
       if (frame.detected) {
-        const hovered = hitTest(frame.cursor.x, frame.cursor.y);
-        setHoveredButton(hovered);
+        setHoveredButton(hitTest(frame.cursor.x, frame.cursor.y));
+        setHoveredStyle(hitTestStyle(frame.cursor.x, frame.cursor.y));
         // Rising edge only — prevents re-trigger while holding pinch to draw
         if (frame.pinching && !prev?.pinching) {
           handlePinchClick(frame.cursor.x, frame.cursor.y);
@@ -286,11 +324,12 @@ export default function AirCanvas() {
       (video?.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
     };
-  }, [setState, cursorX, cursorY, hitTest, handlePinchClick]);
+  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, handlePinchClick]);
 
   // ─── Cursor visual state ────────────────────────────────────────────────────
 
-  const cursorState: CursorState = hoveredButton ? 'hover' : isPinching ? 'pinch' : 'normal';
+  const cursorState: CursorState =
+    hoveredButton || hoveredStyle ? 'hover' : isPinching ? 'pinch' : 'normal';
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -304,15 +343,22 @@ export default function AirCanvas() {
 
       {/* Controls */}
       {appState === 'DRAWING' && (
-        <ButtonBar
-          hovered={hoveredButton}
-          clearConfirming={clearConfirming}
-          generateDisabled={strokeCount === 0}
-          onUndo={triggerUndo}
-          onClear={() => triggerClear()}
-          onGenerate={triggerGenerate}
-          registerRect={(id, rect) => { buttonRectsRef.current[id] = rect; }}
-        />
+        <>
+          <StylePicker
+            selected={selectedStyle}
+            hovered={hoveredStyle}
+            registerRect={(key, rect) => { styleRectsRef.current[key] = rect; }}
+          />
+          <ButtonBar
+            hovered={hoveredButton}
+            clearConfirming={clearConfirming}
+            generateDisabled={strokeCount === 0}
+            onUndo={triggerUndo}
+            onClear={() => triggerClear()}
+            onGenerate={triggerGenerate}
+            registerRect={(id, rect) => { buttonRectsRef.current[id] = rect; }}
+          />
+        </>
       )}
 
       {/* Result screen */}

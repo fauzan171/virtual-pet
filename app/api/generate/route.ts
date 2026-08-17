@@ -28,6 +28,9 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Image too large' }, { status: 413 });
   }
 
+  const styleRaw = form.get('style');
+  const style = typeof styleRaw === 'string' ? styleRaw : undefined;
+
   const buf = Buffer.from(await file.arrayBuffer());
 
   if (!isConfigured()) {
@@ -40,7 +43,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { imageUrl } = await generateImage(buf);
+    const { imageUrl } = await generateImage(buf, { style });
     return Response.json({ imageUrl, status: 'generated' });
   } catch (err) {
     console.error('Generation failed:', err);

@@ -8,7 +8,7 @@
  * only this file changes — the route and frontend stay untouched.
  */
 
-import { DEFAULT_PROMPT } from './prompt';
+import { DEFAULT_PROMPT, STYLES, type StyleKey } from './prompt';
 
 export interface GenerateOptions {
   style?: string;
@@ -19,9 +19,9 @@ export interface GenerateResult {
 }
 
 function buildPrompt(style?: string): string {
-  const styleLine = style
-    ? `\n\nApply this visual style: ${style}.`
-    : '';
+  // Style arrives as a key ("REALISTIC"); send the human description instead
+  const desc = style && style in STYLES ? STYLES[style as StyleKey] : null;
+  const styleLine = desc ? `\n\nApply this visual style: ${desc}.` : '';
   return DEFAULT_PROMPT + styleLine;
 }
 
