@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+html,
+body {
+  height: 100%;
+  background: #050510;
+  color: #fff;
+  font-family: system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  cursor: none; /* hand cursor replaces mouse pointer on stage */
+}
+
+/* Mouse cursor still visible on interactive elements for operator fallback */
+button,
+a {
+  cursor: pointer;
+}
