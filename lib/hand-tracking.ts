@@ -12,6 +12,7 @@ import {
   SMOOTHING_FAST,
   FAST_MOVE_THRESHOLD,
   DEAD_ZONE,
+  RAW_ANCHOR_THRESHOLD,
 } from './constants';
 import { smoothAdaptive, pinchDistance } from './geometry';
 import { mapWithCalibration, type CalibrationData } from './calibration';
@@ -100,12 +101,20 @@ export function extractHandFrame(
   // Hysteresis: different thresholds for activation vs release
   const pinching = prev?.pinching ? dist < cal.pinchOff : dist < cal.pinchOn;
 
-  const target = mapWithCalibration(rawIndex.x, rawIndex.y, canvasW, canvasH, cal);
+  // Anchor: the target only updates when the raw fingertip moves past the
+  // threshold from the last accepted position. A still hand holds its anchor,
+  // and the cursor freezes entirely — no smoothing creep, no tremor drift.
+  const prevAnchor = prev?.anchor ?? rawIndex;
+  const rawMove = Math.hypot(rawIndex.x - prevAnchor.x, rawIndex.y - prevAnchor.y);
+  const still = rawMove <= RAW_ANCHOR_THRESHOLD;
+  const anchor = still ? prevAnchor : rawIndex;
+
+  const target = mapWithCalibration(anchor.x, anchor.y, canvasW, canvasH, cal);
   const cursor = prev
-    ? smoothAdaptive(prev.cursor, target, SMOOTHING, SMOOTHING_FAST, FAST_MOVE_THRESHOLD, DEAD_ZONE)
+    ? smoothAdaptive(prev.cursor, target, SMOOTHING, SMOOTHING_FAST, FAST_MOVE_THRESHOLD, DEAD_ZONE, still)
     : target;
 
   const twoFingers = detectTwoFingers(landmarks);
 
-  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers };
+  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, anchor };
 }

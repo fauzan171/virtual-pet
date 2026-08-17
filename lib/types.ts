@@ -31,6 +31,9 @@ export interface HandFrame {
   pinching: boolean;
   // Gesture: only index + middle extended (two fingers up)
   twoFingers: boolean;
+  // Last raw fingertip position accepted as the cursor target.
+  // Only updated when the hand moves past the anchor threshold.
+  anchor?: Point;
 }
 
 export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE';

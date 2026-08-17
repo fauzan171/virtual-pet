@@ -11,8 +11,13 @@ export function smoothAdaptive(
   alphaSlow: number,
   alphaFast: number,
   fastThreshold: number,
-  deadZone: number
+  deadZone: number,
+  still: boolean
 ): Point {
+  // Still hand: freeze completely. Without this, each frame adds a tiny
+  // alpha * (target - cursor) step toward the frozen target and the cursor
+  // creeps while the hand holds a pose.
+  if (still) return prev;
   const dx = next.x - prev.x;
   const dy = next.y - prev.y;
   const dist = Math.hypot(dx, dy);

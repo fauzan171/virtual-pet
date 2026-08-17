@@ -14,6 +14,11 @@ export const FAST_MOVE_THRESHOLD = 25;
 // killing hand tremor without affecting deliberate strokes.
 export const DEAD_ZONE = 2.5;
 
+// Anchor dead zone (normalized 0-1 camera coords): the raw fingertip position
+// only becomes the new cursor target when it moves this far from the last
+// accepted anchor. A still hand holds its anchor, so no slow drift.
+export const RAW_ANCHOR_THRESHOLD = 0.008;
+
 // Center fraction of camera frame mapped to full canvas
 export const REGION = 0.75;
 
