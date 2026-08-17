@@ -310,10 +310,15 @@ export default function AirCanvas() {
       }
 
       const [cw, ch] = drawing.size();
+      const canvasRect = drawing.rect();
       const result = landmarker.detectForVideo(video, performance.now());
       const frame = extractHandFrame(result, cw, ch, prevFrameRef.current, calRef.current);
       const prev = prevFrameRef.current;
       prevFrameRef.current = frame;
+
+      // frame.cursor is canvas-local; viewport coords for cursor display + button hit-testing
+      const vx = frame.cursor.x + canvasRect.left;
+      const vy = frame.cursor.y + canvasRect.top;
 
       // Calibration sampling (B key) — separate from normal drawing flow
       const calPhase = calModeRef.current;
@@ -340,8 +345,8 @@ export default function AirCanvas() {
         }
       }
 
-      cursorX.set(frame.cursor.x);
-      cursorY.set(frame.cursor.y);
+      cursorX.set(vx);
+      cursorY.set(vy);
 
       // FPS + debug snapshot (1Hz to avoid per-frame re-renders)
       fpsCount++;
@@ -377,8 +382,8 @@ export default function AirCanvas() {
 
       // Suppress drawing while the cursor is over a virtual control
       const overControl =
-        hitTest(frame.cursor.x, frame.cursor.y) !== null ||
-        hitTestStyle(frame.cursor.x, frame.cursor.y) !== null;
+        hitTest(vx, vy) !== null ||
+        hitTestStyle(vx, vy) !== null;
 
       // Drawing
       if (stateRef.current === 'DRAWING' && frame.detected && !overControl) {
@@ -404,13 +409,13 @@ export default function AirCanvas() {
         setStrokeCount(strokesRef.current.length);
       }
 
-      // Button hover + click
+      // Button hover + click (viewport coords vs DOM rects)
       if (frame.detected) {
-        setHoveredButton(hitTest(frame.cursor.x, frame.cursor.y));
-        setHoveredStyle(hitTestStyle(frame.cursor.x, frame.cursor.y));
+        setHoveredButton(hitTest(vx, vy));
+        setHoveredStyle(hitTestStyle(vx, vy));
         // Rising edge only — prevents re-trigger while holding pinch to draw
         if (frame.pinching && !prev?.pinching) {
-          handlePinchClick(frame.cursor.x, frame.cursor.y);
+          handlePinchClick(vx, vy);
         }
       }
 

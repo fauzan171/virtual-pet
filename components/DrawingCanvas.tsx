@@ -17,6 +17,8 @@ export interface DrawingCanvasHandle {
   exportPng(): Promise<Blob>;
   /** Returns [w, h] in CSS pixels. */
   size(): [number, number];
+  /** Canvas position in viewport coordinates. */
+  rect(): DOMRect;
 }
 
 const DrawingCanvas = forwardRef<DrawingCanvasHandle>(function DrawingCanvas(
@@ -70,6 +72,7 @@ const DrawingCanvas = forwardRef<DrawingCanvasHandle>(function DrawingCanvas(
       return exportPng(canvasRef.current!);
     },
     size: () => [canvasRef.current?.clientWidth ?? 0, canvasRef.current?.clientHeight ?? 0],
+    rect: () => canvasRef.current?.getBoundingClientRect() ?? new DOMRect(),
   }));
 
   return (
