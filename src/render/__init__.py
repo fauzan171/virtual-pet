@@ -1,1 +1,0 @@
-"""Rendering modules for HoloPet."""

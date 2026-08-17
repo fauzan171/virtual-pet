@@ -1,5 +1,0 @@
-model: qwen3.8-max
-api_base: https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
-api_key_env: HOLOPET_REMOTE_API_KEY
-persona: tiny holo fox companion
-timeout_s: 8
