@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useMotionValue } from 'framer-motion';
+import { motion, useMotionValue } from 'framer-motion';
 import { createHandLandmarker, extractHandFrame } from '@/lib/hand-tracking';
 import { drawStrokeSegment } from '@/lib/strokes';
 import { CAMERA, BUTTON_DEBOUNCE_MS, CLEAR_CONFIRM_TIMEOUT_MS, INK, STROKE_WIDTH } from '@/lib/constants';
@@ -12,6 +12,7 @@ import ButtonBar from './ButtonBar';
 import StatusBanner from './StatusBanner';
 import DebugPanel from './DebugPanel';
 import CameraPreview from './CameraPreview';
+import LoadingExperience from './LoadingExperience';
 
 export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
@@ -23,6 +24,7 @@ export default function AirCanvas() {
   const [strokeCount, setStrokeCount] = useState(0);
   const [fps, setFps] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [sketchUrl, setSketchUrl] = useState<string | null>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [debugFrame, setDebugFrame] = useState<HandFrame | null>(null);
 
@@ -87,6 +89,7 @@ export default function AirCanvas() {
     setBanner('SKETCH CAPTURED ✓');
     try {
       const blob = await drawingRef.current!.exportPng();
+      setSketchUrl(URL.createObjectURL(blob));
       setState('GENERATING');
       const form = new FormData();
       form.append('image', blob, 'sketch.png');
@@ -94,6 +97,8 @@ export default function AirCanvas() {
       if (!res.ok) throw new Error('API error');
       const data = await res.json();
       setResultUrl(data.imageUrl);
+      // Hold on the reveal ~1.4s after the asset arrives (PRD §26)
+      await new Promise((r) => setTimeout(r, 1400));
       setState('RESULT');
       setBanner(null);
     } catch {
@@ -110,10 +115,12 @@ export default function AirCanvas() {
     drawingRef.current?.clear();
     setStrokeCount(0);
     setResultUrl(null);
+    if (sketchUrl) URL.revokeObjectURL(sketchUrl);
+    setSketchUrl(null);
     setClearConfirming(false);
     setState('READY');
     setBanner(null);
-  }, [setState]);
+  }, [setState, sketchUrl]);
 
   const toggleFullscreen = useCallback(() => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen();
@@ -310,25 +317,22 @@ export default function AirCanvas() {
 
       {/* Result screen */}
       {appState === 'RESULT' && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-10 bg-[#050510]">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.9 }}
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-10 bg-[#050510]"
+        >
           <h2 className="text-5xl font-bold tracking-widest text-white">FROM IMAGINATION TO CREATION</h2>
           <div className="flex items-center gap-16">
             <div className="text-center">
               <p className="mb-3 text-sm tracking-[0.3em] text-slate-400">YOUR SKETCH</p>
-              <canvas
-                ref={(el) => {
-                  // Copy the drawing canvas snapshot into the result view
-                  if (!el) return;
-                  const src = drawingRef.current?.getCanvas();
-                  if (!src) return;
-                  el.width = src.width;
-                  el.height = src.height;
-                  el.style.width = '360px';
-                  el.style.height = '270px';
-                  el.getContext('2d')?.drawImage(src, 0, 0);
-                }}
-                className="rounded-xl"
-              />
+              {sketchUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={sketchUrl} alt="Sketch" className="h-[270px] w-[360px] rounded-xl object-contain" />
+              ) : (
+                <div className="h-[270px] w-[360px] rounded-xl bg-white/5" />
+              )}
             </div>
             <div className="text-4xl text-slate-600">→</div>
             <div className="text-center">
@@ -347,8 +351,11 @@ export default function AirCanvas() {
           >
             START AGAIN
           </button>
-        </div>
+        </motion.div>
       )}
+
+      {/* Staged loading during capture + generation */}
+      {(appState === 'CAPTURE' || appState === 'GENERATING') && <LoadingExperience />}
 
       {/* Cursor */}
       <HandCursor x={cursorX} y={cursorY} state={cursorState} />

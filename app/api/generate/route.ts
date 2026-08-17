@@ -1,11 +1,13 @@
+import { generateImage, isConfigured } from '@/lib/qwen-provider';
+
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 
 /**
  * POST /api/generate
- * Phase 1 placeholder: receives the sketch PNG and echoes it back as a data URL
- * so the RESULT screen has something to display.
- * Phase 4: replace the body with a real call to wan2.7-image-pro.
- * QWEN_API_KEY stays server-side only — never in the browser bundle.
+ * Body: FormData with `image` (PNG sketch).
+ * When QWEN_API_URL/QWEN_API_KEY are configured it calls wan2.7-image-pro via
+ * the server-side adapter; otherwise it echoes the sketch back so the demo UI
+ * is fully testable. API keys live server-side only.
  */
 export async function POST(req: Request) {
   let form: FormData;
@@ -26,16 +28,23 @@ export async function POST(req: Request) {
     return Response.json({ error: 'Image too large' }, { status: 413 });
   }
 
-  // Simulate generation latency for realistic stage pacing
-  await new Promise((r) => setTimeout(r, 1500));
-
-  // Echo sketch back as data URL until real provider wired (Phase 4)
   const buf = Buffer.from(await file.arrayBuffer());
-  const dataUrl = `data:image/png;base64,${buf.toString('base64')}`;
 
-  return Response.json({
-    imageUrl: dataUrl,
-    status: 'mock',
-    message: 'Placeholder — real wan2.7-image-pro integration in Phase 4',
-  });
+  if (!isConfigured()) {
+    // Mock mode: echo sketch so RESULT screen works before provider is wired
+    await new Promise((r) => setTimeout(r, 1500));
+    return Response.json({
+      imageUrl: `data:image/png;base64,${buf.toString('base64')}`,
+      status: 'mock',
+    });
+  }
+
+  try {
+    const { imageUrl } = await generateImage(buf);
+    return Response.json({ imageUrl, status: 'generated' });
+  } catch (err) {
+    console.error('Generation failed:', err);
+    // Never leak stack traces or provider internals to the client
+    return Response.json({ error: 'UNABLE TO GENERATE' }, { status: 502 });
+  }
 }
