@@ -3,8 +3,9 @@ import {
   HandLandmarker,
   type HandLandmarkerResult,
 } from '@mediapipe/tasks-vision';
-import { MODEL_URL, WASM_BASE, INDEX_TIP, THUMB_TIP, PINCH_ON, PINCH_OFF } from './constants';
-import { mapToCanvas, smooth, pinchDistance } from './geometry';
+import { MODEL_URL, WASM_BASE, INDEX_TIP, THUMB_TIP } from './constants';
+import { smooth, pinchDistance } from './geometry';
+import { mapWithCalibration, type CalibrationData } from './calibration';
 import type { HandFrame, Point } from './types';
 
 /** Create the MediaPipe Hand Landmarker. Falls back GPU -> CPU silently. */
@@ -29,13 +30,14 @@ export async function createHandLandmarker(): Promise<HandLandmarker> {
 
 /**
  * Pure per-frame extraction. Reads landmark 8 (index tip) and 4 (thumb tip),
- * applies region mapping, mirror, smoothing, and pinch hysteresis.
+ * applies calibrated region mapping, mirror, smoothing, and pinch hysteresis.
  */
 export function extractHandFrame(
   result: HandLandmarkerResult,
   canvasW: number,
   canvasH: number,
-  prev: HandFrame | null
+  prev: HandFrame | null,
+  cal: CalibrationData
 ): HandFrame {
   const landmarks = result.landmarks?.[0];
   if (!landmarks) {
@@ -54,9 +56,9 @@ export function extractHandFrame(
   const dist = pinchDistance(rawIndex, rawThumb);
 
   // Hysteresis: different thresholds for activation vs release
-  const pinching = prev?.pinching ? dist < PINCH_OFF : dist < PINCH_ON;
+  const pinching = prev?.pinching ? dist < cal.pinchOff : dist < cal.pinchOn;
 
-  const target = mapToCanvas(rawIndex.x, rawIndex.y, canvasW, canvasH);
+  const target = mapWithCalibration(rawIndex.x, rawIndex.y, canvasW, canvasH, cal);
   const cursor = prev ? smooth(prev.cursor, target) : target;
 
   return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching };

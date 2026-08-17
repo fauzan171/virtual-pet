@@ -16,6 +16,14 @@ import LoadingExperience from './LoadingExperience';
 import StylePicker from './StylePicker';
 import { STYLES, type StyleKey } from '@/lib/prompt';
 import { sound } from '@/lib/sound';
+import {
+  effectiveCalibration,
+  saveCalibration,
+  computePinchThresholds,
+  type CalibrationData,
+} from '@/lib/calibration';
+import { PINCH_ON, PINCH_OFF } from '@/lib/constants';
+import CalibrationOverlay, { type CalibrationPhase } from './CalibrationOverlay';
 
 export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
@@ -28,6 +36,19 @@ export default function AirCanvas() {
   const [fps, setFps] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [sketchUrl, setSketchUrl] = useState<string | null>(null);
+  // Calibration
+  const [calMode, setCalMode] = useState<CalibrationPhase | null>(null);
+  const [calProgress, setCalProgress] = useState(0);
+  const calModeRef = useRef<CalibrationPhase | null>(null);
+  const calRef = useRef<CalibrationData>(effectiveCalibration());
+  const calSamplesRef = useRef({
+    minX: 1, maxX: 0, minY: 1, maxY: 0,
+    startedAt: 0,
+    pinchDists: [] as number[],
+    pinchCycles: 0,
+    wasPinching: false,
+  });
+
   const [selectedStyle, setSelectedStyle] = useState<StyleKey | null>(null);
   const selectedStyleRef = useRef<StyleKey | null>(null);
   const [hoveredStyle, setHoveredStyle] = useState<StyleKey | null>(null);
@@ -141,6 +162,41 @@ export default function AirCanvas() {
     else document.exitFullscreen();
   }, []);
 
+  const startCalibration = useCallback(() => {
+    calSamplesRef.current = {
+      minX: 1, maxX: 0, minY: 1, maxY: 0,
+      startedAt: Date.now(),
+      pinchDists: [],
+      pinchCycles: 0,
+      wasPinching: false,
+    };
+    calModeRef.current = 'RANGE';
+    setCalMode('RANGE');
+    setCalProgress(0);
+  }, []);
+
+  const finishCalibration = useCallback(() => {
+    const s = calSamplesRef.current;
+    if (s.maxX > s.minX && s.maxY > s.minY) {
+      const pinch = s.pinchDists.length >= 4
+        ? computePinchThresholds(s.pinchDists)
+        : { on: PINCH_ON, off: PINCH_OFF };
+      const data: CalibrationData = {
+        minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY,
+        pinchOn: pinch.on, pinchOff: Math.max(pinch.off, pinch.on + 0.005),
+      };
+      calRef.current = data;
+      saveCalibration(data);
+    }
+    calModeRef.current = null;
+    setCalMode(null);
+  }, []);
+
+  const cancelCalibration = useCallback(() => {
+    calModeRef.current = null;
+    setCalMode(null);
+  }, []);
+
   // ─── Button hit testing ─────────────────────────────────────────────────────
 
   const hitTest = useCallback((x: number, y: number): ButtonId | null => {
@@ -199,11 +255,15 @@ export default function AirCanvas() {
         case 'd': setDebugOn(v => !v); break;
         case 'f': toggleFullscreen(); break;
         case 's': sound.toggle(); break;
+        case 'b':
+          if (calModeRef.current) cancelCalibration();
+          else if (stateRef.current === 'READY' || stateRef.current === 'DRAWING') startCalibration();
+          break;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen]);
+  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen, startCalibration, cancelCalibration]);
 
   // ─── Main loop ─────────────────────────────────────────────────────────────
 
@@ -248,9 +308,34 @@ export default function AirCanvas() {
 
       const [cw, ch] = drawing.size();
       const result = landmarker.detectForVideo(video, performance.now());
-      const frame = extractHandFrame(result, cw, ch, prevFrameRef.current);
+      const frame = extractHandFrame(result, cw, ch, prevFrameRef.current, calRef.current);
       const prev = prevFrameRef.current;
       prevFrameRef.current = frame;
+
+      // Calibration sampling (B key) — separate from normal drawing flow
+      const calPhase = calModeRef.current;
+      if (calPhase && frame.detected) {
+        const s = calSamplesRef.current;
+        if (calPhase === 'RANGE') {
+          s.minX = Math.min(s.minX, frame.rawIndex.x);
+          s.maxX = Math.max(s.maxX, frame.rawIndex.x);
+          s.minY = Math.min(s.minY, frame.rawIndex.y);
+          s.maxY = Math.max(s.maxY, frame.rawIndex.y);
+          const elapsed = Date.now() - s.startedAt;
+          setCalProgress(Math.min(elapsed / 8000, 1));
+          if (elapsed >= 8000) {
+            calModeRef.current = 'PINCH';
+            setCalMode('PINCH');
+            setCalProgress(0);
+          }
+        } else {
+          s.pinchDists.push(frame.pinchDist);
+          if (frame.pinching && !s.wasPinching) s.pinchCycles++;
+          s.wasPinching = frame.pinching;
+          setCalProgress(Math.min(s.pinchCycles / 5, 1));
+          if (s.pinchCycles >= 5) finishCalibration();
+        }
+      }
 
       cursorX.set(frame.cursor.x);
       cursorY.set(frame.cursor.y);
@@ -279,6 +364,12 @@ export default function AirCanvas() {
           currentStrokeRef.current = null;
           setStrokeCount(strokesRef.current.length);
         }
+      }
+
+      // Suppress drawing during calibration
+      if (calModeRef.current) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
       }
 
       // Suppress drawing while the cursor is over a virtual control
@@ -331,7 +422,7 @@ export default function AirCanvas() {
       (video?.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
     };
-  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, handlePinchClick]);
+  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, handlePinchClick, finishCalibration]);
 
   // ─── Cursor visual state ────────────────────────────────────────────────────
 
@@ -409,6 +500,11 @@ export default function AirCanvas() {
 
       {/* Staged loading during capture + generation */}
       {(appState === 'CAPTURE' || appState === 'GENERATING') && <LoadingExperience />}
+
+      {/* Calibration mode */}
+      {calMode && (
+        <CalibrationOverlay phase={calMode} progress={calProgress} onCancel={cancelCalibration} />
+      )}
 
       {/* Cursor */}
       <HandCursor x={cursorX} y={cursorY} state={cursorState} />
