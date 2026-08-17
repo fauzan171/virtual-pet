@@ -47,6 +47,7 @@ export default function AirCanvas() {
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [hoveredButton, setHoveredButton] = useState<ButtonId | null>(null);
   const [clearConfirming, setClearConfirming] = useState(false);
+  const clearConfirmingRef = useRef(false);
   const [strokeCount, setStrokeCount] = useState(0);
   const [fps, setFps] = useState(0);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
@@ -136,18 +137,26 @@ export default function AirCanvas() {
     drawingRef.current?.clear();
     setStrokeCount(0);
     setClearConfirming(false);
+    clearConfirmingRef.current = false;
   }, []);
 
+  // ⚠ Reads clearConfirmingRef, not the state — the rAF loop captured this
+  // callback once at mount, so reading React state here would be permanently
+  // stale and the second "confirm" press would never actually clear.
   const triggerClear = useCallback((skipConfirm = false) => {
     if (stateRef.current !== 'DRAWING') return;
-    if (skipConfirm || clearConfirming) {
+    if (skipConfirm || clearConfirmingRef.current) {
       executeClear();
       return;
     }
+    clearConfirmingRef.current = true;
     setClearConfirming(true);
     if (clearTimerRef.current) clearTimeout(clearTimerRef.current);
-    clearTimerRef.current = setTimeout(() => setClearConfirming(false), CLEAR_CONFIRM_TIMEOUT_MS);
-  }, [clearConfirming, executeClear]);
+    clearTimerRef.current = setTimeout(() => {
+      clearConfirmingRef.current = false;
+      setClearConfirming(false);
+    }, CLEAR_CONFIRM_TIMEOUT_MS);
+  }, [executeClear]);
 
   const triggerGenerate = useCallback(async () => {
     if (stateRef.current === 'GENERATING' || stateRef.current === 'CAPTURE') return;
@@ -193,6 +202,7 @@ export default function AirCanvas() {
     setInkColor(INK);
     inkColorRef.current = INK;
     setClearConfirming(false);
+    clearConfirmingRef.current = false;
     setState('READY');
     setBanner(null);
   }, [setState, sketchUrl]);
@@ -506,13 +516,16 @@ export default function AirCanvas() {
           currentStrokeRef.current = null;
           setStrokeCount(strokesRef.current.length);
         }
-      } else if (frame.detected && currentStrokeRef.current) {
+      } else if (frame.detected && !handLost && currentStrokeRef.current) {
         // Hand present but cursor moved over a control — commit the stroke.
         // (Hand-lost case is handled above after the grace period expires.)
         strokesRef.current.push(currentStrokeRef.current);
         currentStrokeRef.current = null;
         setStrokeCount(strokesRef.current.length);
       }
+      // While hand is briefly lost (within the grace window), the open stroke
+      // is NOT committed — drawing resumes the same stroke when the hand
+      // returns, instead of starting a new one mid-line.
 
       // Button hover + click (viewport coords vs DOM rects)
       if (frame.detected) {

@@ -1,18 +1,18 @@
 export const CAMERA = { width: 1280, height: 720 };
 
 // Exponential smoothing factor for cursor position (0-1, higher = snappier)
-export const SMOOTHING = 0.35;
+export const SMOOTHING = 0.28;
 
 // Fast-move smoothing: kicks in when the hand moves quickly so big sweeps
-// don't feel laggy. Balances jitter reduction vs responsiveness.
-export const SMOOTHING_FAST = 0.6;
+// don't feel laggy. Slow moves keep the heavier SMOOTHING for stability.
+export const SMOOTHING_FAST = 0.5;
 
-// Distance (canvas px) a fast move must exceed per frame to count as intentional
-export const FAST_MOVE_THRESHOLD = 25;
+// Distance (canvas px) per frame above which a move counts as "fast"
+export const FAST_MOVE_THRESHOLD = 18;
 
-// Jitter gate (canvas px): cursor ignores raw movement smaller than this,
-// killing hand tremor without affecting deliberate strokes.
-export const DEAD_ZONE = 2.5;
+// Jitter gate (canvas px): movement smaller than this is ignored entirely,
+// so a still hand doesn't make the cursor drift.
+export const DEAD_ZONE = 3;
 
 // Anchor dead zone (normalized 0-1 camera coords): the raw fingertip position
 // only becomes the new cursor target when it moves this far from the last
@@ -39,8 +39,9 @@ export const TWO_FINGER_COOLDOWN_MS = 1000;
 export const DWELL_CLICK_MS = 700;
 
 // Frames of lost tracking tolerated before committing the open stroke.
-// Prevents mode flicker when detection drops for a frame or two.
-export const HAND_LOST_GRACE_FRAMES = 15;
+// Long enough (~1s at 30fps) to ride out brief detection dropouts while
+// drawing fast or when the hand briefly occludes itself.
+export const HAND_LOST_GRACE_FRAMES = 30;
 
 // Extra pixels added around every virtual button for hit-testing
 export const BUTTON_HIT_PAD = 30;

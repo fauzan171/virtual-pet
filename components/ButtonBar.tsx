@@ -69,11 +69,11 @@ export default function ButtonBar({
       />
       <VirtualButton
         id="CLEAR"
-        label={clearConfirming ? 'CONFIRM?' : 'CLEAR'}
+        label={clearConfirming ? 'CLICK AGAIN TO CLEAR' : 'CLEAR'}
         hovered={hovered === 'CLEAR'}
         onClick={onClear}
         registerRect={registerRect}
-        className={clearConfirming ? 'bg-red-500/20 text-red-300 ring-red-400' : ''}
+        className={clearConfirming ? 'bg-red-500/20 text-red-300 ring-red-400 animate-pulse' : ''}
       />
       <VirtualButton
         id="GENERATE"

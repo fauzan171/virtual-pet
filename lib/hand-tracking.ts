@@ -58,7 +58,9 @@ export async function createHandLandmarker(): Promise<HandLandmarker> {
     numHands: 1,
     minHandDetectionConfidence: 0.5,
     minHandPresenceConfidence: 0.5,
-    minTrackingConfidence: 0.5,
+    // Looser tracking confidence: keeps the landmark stream alive through
+    // fast sweeps and brief self-occlusion instead of dropping frames.
+    minTrackingConfidence: 0.3,
     runningMode: 'VIDEO' as const,
   });
 
