@@ -368,6 +368,12 @@ class VoiceSession(Generic[ResultT]):
     def _speak_now(self, text: str | None) -> bool:
         if not text or self._stop_event.is_set():
             return False
+        # A camera-frame request accepted between the SPEAKING state transition
+        # and tts.speak() must not cancel the playback it raced with.  If the
+        # backend is already speaking, this turn is a duplicate: drop it
+        # instead of truncating both lines to silence.
+        if self.tts.speaking:
+            return False
         started = self.tts.speak(text)
         if not started:
             return False
