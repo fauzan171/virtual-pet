@@ -13,6 +13,17 @@ export const PINCH_OFF = 0.075;
 export const BUTTON_DEBOUNCE_MS = 500;
 export const CLEAR_CONFIRM_TIMEOUT_MS = 3000;
 
+// Dwell-to-click: hover cursor on a control for this long to activate.
+// Easier on stage than a precise pinch on a moving target.
+export const DWELL_CLICK_MS = 700;
+
+// Frames of lost tracking tolerated before committing the open stroke.
+// Prevents mode flicker when detection drops for a frame or two.
+export const HAND_LOST_GRACE_FRAMES = 15;
+
+// Extra pixels added around every virtual button for hit-testing
+export const BUTTON_HIT_PAD = 30;
+
 export const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 export const WASM_BASE =

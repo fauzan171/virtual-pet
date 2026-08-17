@@ -4,7 +4,16 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, useMotionValue } from 'framer-motion';
 import { createHandLandmarker, extractHandFrame } from '@/lib/hand-tracking';
 import { drawStrokeSegment } from '@/lib/strokes';
-import { CAMERA, BUTTON_DEBOUNCE_MS, CLEAR_CONFIRM_TIMEOUT_MS, INK, STROKE_WIDTH } from '@/lib/constants';
+import {
+  CAMERA,
+  BUTTON_DEBOUNCE_MS,
+  CLEAR_CONFIRM_TIMEOUT_MS,
+  INK,
+  STROKE_WIDTH,
+  DWELL_CLICK_MS,
+  HAND_LOST_GRACE_FRAMES,
+  BUTTON_HIT_PAD,
+} from '@/lib/constants';
 import type { AppState, ButtonId, HandFrame, Stroke } from '@/lib/types';
 import DrawingCanvas, { type DrawingCanvasHandle } from './DrawingCanvas';
 import HandCursor, { type CursorState } from './HandCursor';
@@ -72,6 +81,10 @@ export default function AirCanvas() {
     GENERATE: null,
   });
   const lastClickRef = useRef<Record<ButtonId, number>>({ UNDO: 0, CLEAR: 0, GENERATE: 0 });
+  // Dwell-to-click state: which control the cursor is resting on, and since when
+  const dwellRef = useRef<{ id: string | null; since: number }>({ id: null, since: 0 });
+  // Frames of lost hand tracking tolerated before committing the open stroke
+  const handLostFramesRef = useRef(0);
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const styleRectsRef = useRef<Partial<Record<StyleKey, DOMRect | null>>>({});
   const lastStyleClickRef = useRef(0);
@@ -204,7 +217,13 @@ export default function AirCanvas() {
   const hitTest = useCallback((x: number, y: number): ButtonId | null => {
     for (const id of ['UNDO', 'CLEAR', 'GENERATE'] as ButtonId[]) {
       const rect = buttonRectsRef.current[id];
-      if (rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      if (
+        rect &&
+        x >= rect.left - BUTTON_HIT_PAD &&
+        x <= rect.right + BUTTON_HIT_PAD &&
+        y >= rect.top - BUTTON_HIT_PAD &&
+        y <= rect.bottom + BUTTON_HIT_PAD
+      ) {
         return id;
       }
     }
@@ -214,7 +233,13 @@ export default function AirCanvas() {
   const hitTestStyle = useCallback((x: number, y: number): StyleKey | null => {
     for (const key of Object.keys(STYLES) as StyleKey[]) {
       const rect = styleRectsRef.current[key];
-      if (rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+      if (
+        rect &&
+        x >= rect.left - BUTTON_HIT_PAD &&
+        x <= rect.right + BUTTON_HIT_PAD &&
+        y >= rect.top - BUTTON_HIT_PAD &&
+        y <= rect.bottom + BUTTON_HIT_PAD
+      ) {
         return key;
       }
     }
@@ -365,13 +390,15 @@ export default function AirCanvas() {
         setBanner(null);
         sound.trackingOn();
       }
-      if (stateRef.current === 'DRAWING' && !frame.detected) {
-        // Hand lost mid-drawing — finish current stroke, stay in DRAWING
-        if (currentStrokeRef.current) {
-          strokesRef.current.push(currentStrokeRef.current);
-          currentStrokeRef.current = null;
-          setStrokeCount(strokesRef.current.length);
-        }
+      // Grace period: tolerate brief detection dropouts so the stroke (and
+      // paint mode) doesn't flicker off for a lost frame or two.
+      handLostFramesRef.current = frame.detected ? 0 : handLostFramesRef.current + 1;
+      const handLost = handLostFramesRef.current > HAND_LOST_GRACE_FRAMES;
+      if (stateRef.current === 'DRAWING' && handLost && currentStrokeRef.current) {
+        // Hand truly lost mid-drawing — finish current stroke, stay in DRAWING
+        strokesRef.current.push(currentStrokeRef.current);
+        currentStrokeRef.current = null;
+        setStrokeCount(strokesRef.current.length);
       }
 
       // Suppress drawing during calibration
@@ -385,8 +412,8 @@ export default function AirCanvas() {
         hitTest(vx, vy) !== null ||
         hitTestStyle(vx, vy) !== null;
 
-      // Drawing
-      if (stateRef.current === 'DRAWING' && frame.detected && !overControl) {
+      // Drawing (only while hand is reliably present)
+      if (stateRef.current === 'DRAWING' && frame.detected && !handLost && !overControl) {
         const ctx = drawing.getCtx();
         if (frame.pinching) {
           if (!currentStrokeRef.current) {
@@ -402,8 +429,9 @@ export default function AirCanvas() {
           currentStrokeRef.current = null;
           setStrokeCount(strokesRef.current.length);
         }
-      } else if (currentStrokeRef.current) {
-        // Cursor left the canvas area or moved over a control — commit the stroke
+      } else if (frame.detected && currentStrokeRef.current) {
+        // Hand present but cursor moved over a control — commit the stroke.
+        // (Hand-lost case is handled above after the grace period expires.)
         strokesRef.current.push(currentStrokeRef.current);
         currentStrokeRef.current = null;
         setStrokeCount(strokesRef.current.length);
@@ -417,6 +445,23 @@ export default function AirCanvas() {
         if (frame.pinching && !prev?.pinching) {
           handlePinchClick(vx, vy);
         }
+
+        // Dwell-to-click: rest the cursor on a control to activate it.
+        // Easier on stage than a precise pinch on a moving target.
+        const dwellId = hitTest(vx, vy) ?? hitTestStyle(vx, vy);
+        if (dwellId) {
+          if (dwellRef.current.id !== dwellId) {
+            dwellRef.current = { id: dwellId, since: Date.now() };
+          } else if (Date.now() - dwellRef.current.since >= DWELL_CLICK_MS) {
+            // Infinity sentinel: won't re-fire until the cursor leaves and returns
+            dwellRef.current = { id: dwellId, since: Number.POSITIVE_INFINITY };
+            handlePinchClick(vx, vy);
+          }
+        } else {
+          dwellRef.current = { id: null, since: 0 };
+        }
+      } else {
+        dwellRef.current = { id: null, since: 0 };
       }
 
       rafRef.current = requestAnimationFrame(loop);
