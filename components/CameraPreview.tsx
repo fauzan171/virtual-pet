@@ -19,7 +19,7 @@ export default function CameraPreview({ stream }: { stream: MediaStream | null }
   if (!stream) return null;
 
   return (
-    <div className="absolute bottom-4 right-4 z-30 w-[220px] overflow-hidden rounded-xl border border-white/20 shadow-lg">
+    <div className="absolute bottom-4 right-4 z-30 w-[380px] overflow-hidden rounded-xl border border-white/20 shadow-lg">
       {/* Mirrored so presenter sees themselves like a mirror */}
       <video ref={localRef} autoPlay playsInline muted className="w-full -scale-x-100" />
       <div className="flex items-center gap-1.5 bg-black/70 px-2 py-1">

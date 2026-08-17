@@ -9,6 +9,7 @@ import {
   BUTTON_DEBOUNCE_MS,
   CLEAR_CONFIRM_TIMEOUT_MS,
   INK,
+  COLORS,
   STROKE_WIDTH,
   DWELL_CLICK_MS,
   HAND_LOST_GRACE_FRAMES,
@@ -23,6 +24,7 @@ import DebugPanel from './DebugPanel';
 import CameraPreview from './CameraPreview';
 import LoadingExperience from './LoadingExperience';
 import StylePicker from './StylePicker';
+import ColorPicker from './ColorPicker';
 import { STYLES, type StyleKey } from '@/lib/prompt';
 import { sound } from '@/lib/sound';
 import {
@@ -63,6 +65,10 @@ export default function AirCanvas() {
   const [selectedStyle, setSelectedStyle] = useState<StyleKey | null>(null);
   const selectedStyleRef = useRef<StyleKey | null>(null);
   const [hoveredStyle, setHoveredStyle] = useState<StyleKey | null>(null);
+  // Ink color — selected via the right-side palette; tints cursor dot + strokes
+  const [inkColor, setInkColor] = useState<string>(INK);
+  const inkColorRef = useRef<string>(INK);
+  const [hoveredColor, setHoveredColor] = useState<string | null>(null);
   const [isPinching, setIsPinching] = useState(false);
   const [debugFrame, setDebugFrame] = useState<HandFrame | null>(null);
 
@@ -88,6 +94,8 @@ export default function AirCanvas() {
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const styleRectsRef = useRef<Partial<Record<StyleKey, DOMRect | null>>>({});
   const lastStyleClickRef = useRef(0);
+  const colorRectsRef = useRef<Record<string, DOMRect | null>>({});
+  const lastColorClickRef = useRef(0);
 
   // MotionValues — cursor position updates without React re-render
   const cursorX = useMotionValue(0);
@@ -167,6 +175,8 @@ export default function AirCanvas() {
     setSketchUrl(null);
     setSelectedStyle(null);
     selectedStyleRef.current = null;
+    setInkColor(INK);
+    inkColorRef.current = INK;
     setClearConfirming(false);
     setState('READY');
     setBanner(null);
@@ -246,9 +256,34 @@ export default function AirCanvas() {
     return null;
   }, []);
 
+  const hitTestColor = useCallback((x: number, y: number): string | null => {
+    for (const color of COLORS) {
+      const rect = colorRectsRef.current[color];
+      if (
+        rect &&
+        x >= rect.left - BUTTON_HIT_PAD &&
+        x <= rect.right + BUTTON_HIT_PAD &&
+        y >= rect.top - BUTTON_HIT_PAD &&
+        y <= rect.bottom + BUTTON_HIT_PAD
+      ) {
+        return color;
+      }
+    }
+    return null;
+  }, []);
+
   const handlePinchClick = useCallback(
     (x: number, y: number) => {
       const now = Date.now();
+      const color = hitTestColor(x, y);
+      if (color) {
+        if (now - lastColorClickRef.current < BUTTON_DEBOUNCE_MS) return;
+        lastColorClickRef.current = now;
+        sound.click();
+        setInkColor(color);
+        inkColorRef.current = color;
+        return;
+      }
       const style = hitTestStyle(x, y);
       if (style) {
         if (now - lastStyleClickRef.current < BUTTON_DEBOUNCE_MS) return;
@@ -266,7 +301,7 @@ export default function AirCanvas() {
       else if (id === 'CLEAR') triggerClear();
       else if (id === 'GENERATE') triggerGenerate();
     },
-    [hitTest, hitTestStyle, triggerUndo, triggerClear, triggerGenerate]
+    [hitTest, hitTestStyle, hitTestColor, triggerUndo, triggerClear, triggerGenerate]
   );
 
   // ─── Keyboard failsafes ─────────────────────────────────────────────────────
@@ -410,14 +445,15 @@ export default function AirCanvas() {
       // Suppress drawing while the cursor is over a virtual control
       const overControl =
         hitTest(vx, vy) !== null ||
-        hitTestStyle(vx, vy) !== null;
+        hitTestStyle(vx, vy) !== null ||
+        hitTestColor(vx, vy) !== null;
 
       // Drawing (only while hand is reliably present)
       if (stateRef.current === 'DRAWING' && frame.detected && !handLost && !overControl) {
         const ctx = drawing.getCtx();
         if (frame.pinching) {
           if (!currentStrokeRef.current) {
-            currentStrokeRef.current = { points: [frame.cursor], width: STROKE_WIDTH, color: INK };
+            currentStrokeRef.current = { points: [frame.cursor], width: STROKE_WIDTH, color: inkColorRef.current };
             lastDrawnIndexRef.current = 0;
           } else {
             currentStrokeRef.current.points.push(frame.cursor);
@@ -441,6 +477,7 @@ export default function AirCanvas() {
       if (frame.detected) {
         setHoveredButton(hitTest(vx, vy));
         setHoveredStyle(hitTestStyle(vx, vy));
+        setHoveredColor(hitTestColor(vx, vy));
         // Rising edge only — prevents re-trigger while holding pinch to draw
         if (frame.pinching && !prev?.pinching) {
           handlePinchClick(vx, vy);
@@ -448,7 +485,7 @@ export default function AirCanvas() {
 
         // Dwell-to-click: rest the cursor on a control to activate it.
         // Easier on stage than a precise pinch on a moving target.
-        const dwellId = hitTest(vx, vy) ?? hitTestStyle(vx, vy);
+        const dwellId = hitTest(vx, vy) ?? hitTestStyle(vx, vy) ?? hitTestColor(vx, vy);
         if (dwellId) {
           if (dwellRef.current.id !== dwellId) {
             dwellRef.current = { id: dwellId, since: Date.now() };
@@ -475,12 +512,12 @@ export default function AirCanvas() {
       (video?.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
     };
-  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, handlePinchClick, finishCalibration]);
+  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, hitTestColor, handlePinchClick, finishCalibration]);
 
   // ─── Cursor visual state ────────────────────────────────────────────────────
 
   const cursorState: CursorState =
-    hoveredButton || hoveredStyle ? 'hover' : isPinching ? 'pinch' : 'normal';
+    hoveredButton || hoveredStyle || hoveredColor ? 'hover' : isPinching ? 'pinch' : 'normal';
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -499,6 +536,11 @@ export default function AirCanvas() {
             selected={selectedStyle}
             hovered={hoveredStyle}
             registerRect={(key, rect) => { styleRectsRef.current[key] = rect; }}
+          />
+          <ColorPicker
+            selected={inkColor}
+            hovered={hoveredColor}
+            registerRect={(color, rect) => { colorRectsRef.current[color] = rect; }}
           />
           <ButtonBar
             hovered={hoveredButton}
@@ -560,7 +602,7 @@ export default function AirCanvas() {
       )}
 
       {/* Cursor */}
-      <HandCursor x={cursorX} y={cursorY} state={cursorState} />
+      <HandCursor x={cursorX} y={cursorY} state={cursorState} color={inkColor} />
 
       {/* Status */}
       <StatusBanner state={appState} custom={banner} />

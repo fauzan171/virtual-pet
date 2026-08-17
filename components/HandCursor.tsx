@@ -8,6 +8,8 @@ interface Props {
   x: MotionValue<number>;
   y: MotionValue<number>;
   state: CursorState;
+  /** Inner dot tint = current ink color, so the presenter sees what they'll draw with. */
+  color?: string;
 }
 
 const RING_SCALE: Record<CursorState, number> = {
@@ -17,7 +19,7 @@ const RING_SCALE: Record<CursorState, number> = {
   click: 0.4,
 };
 
-export default function HandCursor({ x, y, state }: Props) {
+export default function HandCursor({ x, y, state, color }: Props) {
   return (
     <motion.div
       className="pointer-events-none fixed left-0 top-0 z-50"
@@ -31,11 +33,12 @@ export default function HandCursor({ x, y, state }: Props) {
         transition={{ duration: 0.12 }}
         style={{ boxShadow: '0 0 12px rgba(103,232,249,0.5)' }}
       />
-      {/* Inner dot */}
+      {/* Inner dot — tinted with the selected ink color */}
       <motion.div
-        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-300"
+        className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80"
+        style={{ backgroundColor: color ?? '#67e8f9' }}
         initial={false}
-        animate={{ scale: state === 'pinch' ? 1.6 : 1, width: 8, height: 8 }}
+        animate={{ scale: state === 'pinch' ? 1.6 : 1, width: 10, height: 10 }}
         transition={{ duration: 0.1 }}
       />
       {/* Click ripple */}

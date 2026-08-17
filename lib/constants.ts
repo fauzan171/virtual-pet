@@ -32,6 +32,19 @@ export const WASM_BASE =
 export const INK = '#1a1a2e';
 export const STROKE_WIDTH = 5;
 
+// Palette for the on-stage color picker (INK first = default).
+// No white — canvas is white, stroke would vanish.
+export const COLORS = [
+  INK,
+  '#e63946', // red
+  '#f77f00', // orange
+  '#fcbf49', // yellow
+  '#2a9d34', // green
+  '#1d6fe0', // blue
+  '#7b2cbf', // purple
+  '#f72585', // pink
+];
+
 // MediaPipe hand landmark indices
 export const INDEX_TIP = 8;
 export const THUMB_TIP = 4;
