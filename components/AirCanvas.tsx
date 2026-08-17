@@ -15,6 +15,7 @@ import CameraPreview from './CameraPreview';
 import LoadingExperience from './LoadingExperience';
 import StylePicker from './StylePicker';
 import { STYLES, type StyleKey } from '@/lib/prompt';
+import { sound } from '@/lib/sound';
 
 export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
@@ -94,6 +95,7 @@ export default function AirCanvas() {
     if (strokesRef.current.length === 0) return;
     setState('CAPTURE');
     setBanner('SKETCH CAPTURED ✓');
+    sound.captured();
     try {
       const blob = await drawingRef.current!.exportPng();
       setSketchUrl(URL.createObjectURL(blob));
@@ -107,6 +109,7 @@ export default function AirCanvas() {
       setResultUrl(data.imageUrl);
       // Hold on the reveal ~1.4s after the asset arrives (PRD §26)
       await new Promise((r) => setTimeout(r, 1400));
+      sound.reveal();
       setState('RESULT');
       setBanner(null);
     } catch {
@@ -174,6 +177,7 @@ export default function AirCanvas() {
       if (!id) return;
       if (now - lastClickRef.current[id] < BUTTON_DEBOUNCE_MS) return;
       lastClickRef.current[id] = now;
+      sound.click();
       if (id === 'UNDO') triggerUndo();
       else if (id === 'CLEAR') triggerClear();
       else if (id === 'GENERATE') triggerGenerate();
@@ -193,6 +197,7 @@ export default function AirCanvas() {
         case 'c': setCameraPreviewOn(v => !v); break;
         case 'd': setDebugOn(v => !v); break;
         case 'f': toggleFullscreen(); break;
+        case 's': sound.toggle(); break;
       }
     };
     window.addEventListener('keydown', onKey);

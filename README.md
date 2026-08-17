@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Air Canvas
 
-## Getting Started
+Draw your idea in the air. Let AI bring it to life.
 
-First, run the development server:
+A fullscreen web demo for live stages: a presenter stands in front of a laptop webcam, draws in the air with their index finger (pinch to draw), then sends the sketch to `wan2.7-image-pro` to generate a polished image. No mouse, tablet, or stylus needed.
+
+Full product spec: [PRD-ai-air-canvas.md](./PRD-ai-air-canvas.md)
+
+## Run
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000, allow camera access, show your hand.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- **Hand tracking** runs fully in the browser (MediaPipe Hand Landmarker). The webcam feed never leaves the machine.
+- **Only the sketch PNG** is sent to the backend on GENERATE.
+- Without API credentials the app runs in **mock mode** (echoes the sketch back) so the full flow is testable offline.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Enable real AI generation
 
-## Learn More
+Copy `.env.local.example` to `.env.local` and fill in:
 
-To learn more about Next.js, take a look at the following resources:
+```
+QWEN_API_URL=...
+QWEN_API_KEY=...
+QWEN_MODEL=wan2.7-image-pro
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` — verify it against the real provider API before the show (model endpoint was unverified at build time).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Stage crew keyboard failsafes
 
-## Deploy on Vercel
+| Key | Action |
+|---|---|
+| `G` | Generate |
+| `Z` | Undo |
+| `X` | Clear (skips confirm) |
+| `R` | Start again |
+| `C` | Toggle camera preview |
+| `D` | Debug panel |
+| `F` | Fullscreen |
+| `S` | Sound on/off |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Show flow
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. Allow camera → `SHOW YOUR HAND TO BEGIN`
+2. Raise hand → cursor appears, `HAND TRACKING ACTIVE`
+3. Pinch thumb + index to draw, release to stop
+4. Optionally pinch a style chip (REALISTIC / CINEMATIC / FUTURISTIC / 3D)
+5. Pinch **GENERATE ✦** → staged loading → before/after reveal
+6. Pinch **START AGAIN** → canvas resets without page reload
