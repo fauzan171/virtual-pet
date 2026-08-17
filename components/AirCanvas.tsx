@@ -100,6 +100,7 @@ export default function AirCanvas() {
       const blob = await drawingRef.current!.exportPng();
       setSketchUrl(URL.createObjectURL(blob));
       setState('GENERATING');
+      sound.generateStart();
       const form = new FormData();
       form.append('image', blob, 'sketch.png');
       if (selectedStyleRef.current) form.append('style', selectedStyleRef.current);
@@ -269,6 +270,7 @@ export default function AirCanvas() {
       if (stateRef.current === 'READY' && frame.detected) {
         setState('DRAWING');
         setBanner(null);
+        sound.trackingOn();
       }
       if (stateRef.current === 'DRAWING' && !frame.detected) {
         // Hand lost mid-drawing — finish current stroke, stay in DRAWING
