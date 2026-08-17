@@ -29,7 +29,9 @@ export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [banner, setBanner] = useState<string | null>(null);
   const [debugOn, setDebugOn] = useState(false);
-  const [cameraPreviewOn, setCameraPreviewOn] = useState(false);
+  // Preview on by default so presenter can see themselves and orient the cursor; toggle with C
+  const [cameraPreviewOn, setCameraPreviewOn] = useState(true);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [hoveredButton, setHoveredButton] = useState<ButtonId | null>(null);
   const [clearConfirming, setClearConfirming] = useState(false);
   const [strokeCount, setStrokeCount] = useState(0);
@@ -285,6 +287,7 @@ export default function AirCanvas() {
         });
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return; }
         videoRef.current!.srcObject = stream;
+        setCameraStream(stream);
         await videoRef.current!.play();
       } catch {
         // Stay in CAMERA_PERMISSION, banner already shows the message
@@ -518,7 +521,7 @@ export default function AirCanvas() {
       )}
 
       {/* Camera preview pip */}
-      {cameraPreviewOn && appState !== 'RESULT' && <CameraPreview videoRef={videoRef} />}
+      {cameraPreviewOn && appState !== 'RESULT' && <CameraPreview stream={cameraStream} />}
     </div>
   );
 }
