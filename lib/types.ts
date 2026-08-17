@@ -29,6 +29,8 @@ export interface HandFrame {
   pinchDist: number;
   // After hysteresis
   pinching: boolean;
+  // Gesture: only index + middle extended (two fingers up)
+  twoFingers: boolean;
 }
 
 export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE';

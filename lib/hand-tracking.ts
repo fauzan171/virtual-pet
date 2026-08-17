@@ -16,6 +16,38 @@ import {
 import { smoothAdaptive, pinchDistance } from './geometry';
 import { mapWithCalibration, type CalibrationData } from './calibration';
 import type { HandFrame, Point } from './types';
+import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+
+// Landmark indices for finger extension detection (tip vs PIP joint)
+const WRIST = 0;
+const INDEX_PIP = 6;
+const MIDDLE_TIP = 12;
+const MIDDLE_PIP = 10;
+const RING_TIP = 16;
+const RING_PIP = 14;
+const PINKY_TIP = 20;
+const PINKY_PIP = 18;
+
+function dist(a: NormalizedLandmark, b: NormalizedLandmark): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** A finger is extended when its tip is farther from the wrist than its PIP joint. */
+function extended(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
+  return dist(lm[tip], lm[WRIST]) > dist(lm[pip], lm[WRIST]) * 1.05;
+}
+
+/**
+ * Two-finger gesture: index + middle extended, ring + pinky curled.
+ * Used to open the color palette on the canvas.
+ */
+function detectTwoFingers(lm: NormalizedLandmark[]): boolean {
+  const index = extended(lm, INDEX_TIP, INDEX_PIP);
+  const middle = extended(lm, MIDDLE_TIP, MIDDLE_PIP);
+  const ring = extended(lm, RING_TIP, RING_PIP);
+  const pinky = extended(lm, PINKY_TIP, PINKY_PIP);
+  return index && middle && !ring && !pinky;
+}
 
 /** Create the MediaPipe Hand Landmarker. Falls back GPU -> CPU silently. */
 export async function createHandLandmarker(): Promise<HandLandmarker> {
@@ -57,6 +89,7 @@ export function extractHandFrame(
       rawThumb: prev?.rawThumb ?? { x: 0.5, y: 0.5 },
       pinchDist: prev?.pinchDist ?? 1,
       pinching: false,
+      twoFingers: false,
     };
   }
 
@@ -72,5 +105,7 @@ export function extractHandFrame(
     ? smoothAdaptive(prev.cursor, target, SMOOTHING, SMOOTHING_FAST, FAST_MOVE_THRESHOLD, DEAD_ZONE)
     : target;
 
-  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching };
+  const twoFingers = detectTwoFingers(landmarks);
+
+  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers };
 }

@@ -24,6 +24,11 @@ export const PINCH_OFF = 0.075;
 export const BUTTON_DEBOUNCE_MS = 500;
 export const CLEAR_CONFIRM_TIMEOUT_MS = 3000;
 
+// Two-finger gesture: consecutive frames needed to toggle the color palette,
+// and cooldown before it can toggle again (prevents double-flip)
+export const TWO_FINGER_HOLD_FRAMES = 5;
+export const TWO_FINGER_COOLDOWN_MS = 1000;
+
 // Dwell-to-click: hover cursor on a control for this long to activate.
 // Easier on stage than a precise pinch on a moving target.
 export const DWELL_CLICK_MS = 700;

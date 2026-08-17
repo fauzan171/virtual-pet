@@ -8,6 +8,8 @@ import {
   CAMERA,
   BUTTON_DEBOUNCE_MS,
   CLEAR_CONFIRM_TIMEOUT_MS,
+  TWO_FINGER_HOLD_FRAMES,
+  TWO_FINGER_COOLDOWN_MS,
   INK,
   COLORS,
   STROKE_WIDTH,
@@ -69,6 +71,15 @@ export default function AirCanvas() {
   const [inkColor, setInkColor] = useState<string>(INK);
   const inkColorRef = useRef<string>(INK);
   const [hoveredColor, setHoveredColor] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  const setPaletteState = useCallback((open: boolean) => {
+    paletteOpenRef.current = open;
+    setPaletteOpen(open);
+  }, []);
+  const togglePalette = useCallback(() => {
+    setPaletteState(!paletteOpenRef.current);
+  }, [setPaletteState]);
   const [isPinching, setIsPinching] = useState(false);
   const [debugFrame, setDebugFrame] = useState<HandFrame | null>(null);
 
@@ -96,6 +107,10 @@ export default function AirCanvas() {
   const lastStyleClickRef = useRef(0);
   const colorRectsRef = useRef<Record<string, DOMRect | null>>({});
   const lastColorClickRef = useRef(0);
+  // Two-finger gesture toggles the color palette
+  const paletteOpenRef = useRef(false);
+  const twoFingerFramesRef = useRef(0);
+  const twoFingerCooldownRef = useRef(0);
 
   // MotionValues — cursor position updates without React re-render
   const cursorX = useMotionValue(0);
@@ -282,6 +297,8 @@ export default function AirCanvas() {
         sound.click();
         setInkColor(color);
         inkColorRef.current = color;
+        // Color chosen — dismiss the palette so drawing resumes
+        setPaletteState(false);
         return;
       }
       const style = hitTestStyle(x, y);
@@ -301,7 +318,7 @@ export default function AirCanvas() {
       else if (id === 'CLEAR') triggerClear();
       else if (id === 'GENERATE') triggerGenerate();
     },
-    [hitTest, hitTestStyle, hitTestColor, triggerUndo, triggerClear, triggerGenerate]
+    [hitTest, hitTestStyle, hitTestColor, triggerUndo, triggerClear, triggerGenerate, setPaletteState]
   );
 
   // ─── Keyboard failsafes ─────────────────────────────────────────────────────
@@ -317,6 +334,7 @@ export default function AirCanvas() {
         case 'd': setDebugOn(v => !v); break;
         case 'f': toggleFullscreen(); break;
         case 's': sound.toggle(); break;
+        case 'v': togglePalette(); break;
         case 'b':
           if (calModeRef.current) cancelCalibration();
           else if (stateRef.current === 'READY' || stateRef.current === 'DRAWING') startCalibration();
@@ -325,7 +343,7 @@ export default function AirCanvas() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen, startCalibration, cancelCalibration]);
+  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen, startCalibration, cancelCalibration, togglePalette]);
 
   // ─── Main loop ─────────────────────────────────────────────────────────────
 
@@ -408,6 +426,23 @@ export default function AirCanvas() {
       cursorX.set(vx);
       cursorY.set(vy);
 
+      // Two-finger gesture (index + middle up) toggles the color palette.
+      // Requires 5 consecutive frames to avoid flicker; cooldown prevents
+      // immediate re-toggle while the hand is still in the pose.
+      if (frame.detected && frame.twoFingers && stateRef.current === 'DRAWING' && !calModeRef.current) {
+        twoFingerFramesRef.current++;
+        if (
+          twoFingerFramesRef.current === TWO_FINGER_HOLD_FRAMES &&
+          Date.now() > twoFingerCooldownRef.current
+        ) {
+          togglePalette();
+          sound.click();
+          twoFingerCooldownRef.current = Date.now() + TWO_FINGER_COOLDOWN_MS;
+        }
+      } else {
+        twoFingerFramesRef.current = 0;
+      }
+
       // FPS + debug snapshot (1Hz to avoid per-frame re-renders)
       fpsCount++;
       const now = performance.now();
@@ -448,8 +483,14 @@ export default function AirCanvas() {
         hitTestStyle(vx, vy) !== null ||
         hitTestColor(vx, vy) !== null;
 
-      // Drawing (only while hand is reliably present)
-      if (stateRef.current === 'DRAWING' && frame.detected && !handLost && !overControl) {
+      // Drawing (only while hand is reliably present and palette closed)
+      if (
+        stateRef.current === 'DRAWING' &&
+        frame.detected &&
+        !handLost &&
+        !overControl &&
+        !paletteOpenRef.current
+      ) {
         const ctx = drawing.getCtx();
         if (frame.pinching) {
           if (!currentStrokeRef.current) {
@@ -512,7 +553,7 @@ export default function AirCanvas() {
       (video?.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
     };
-  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, hitTestColor, handlePinchClick, finishCalibration]);
+  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, hitTestColor, handlePinchClick, togglePalette, finishCalibration]);
 
   // ─── Cursor visual state ────────────────────────────────────────────────────
 
@@ -537,11 +578,13 @@ export default function AirCanvas() {
             hovered={hoveredStyle}
             registerRect={(key, rect) => { styleRectsRef.current[key] = rect; }}
           />
-          <ColorPicker
-            selected={inkColor}
-            hovered={hoveredColor}
-            registerRect={(color, rect) => { colorRectsRef.current[color] = rect; }}
-          />
+          {paletteOpen && (
+            <ColorPicker
+              selected={inkColor}
+              hovered={hoveredColor}
+              registerRect={(color, rect) => { colorRectsRef.current[color] = rect; }}
+            />
+          )}
           <ButtonBar
             hovered={hoveredButton}
             clearConfirming={clearConfirming}

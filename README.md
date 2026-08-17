@@ -43,6 +43,7 @@ Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` — ve
 | `D` | Debug panel |
 | `F` | Fullscreen |
 | `S` | Sound on/off |
+| `V` | Toggle color palette |
 | `B` | Calibration mode (hand range + pinch threshold) |
 
 ## Show flow
