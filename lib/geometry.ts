@@ -1,34 +1,24 @@
 import type { Point } from './types';
-import { REGION, SMOOTHING } from './constants';
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
 
 /**
- * Map normalized camera coords [0,1] to canvas pixels.
- * Crops to the center REGION of the frame and mirrors X so the
- * presenter moving their hand right moves the cursor right.
+ * Adaptive smoothing + dead-zone gate. Small movements (hand tremor) are
+ * ignored entirely; fast deliberate moves get a higher alpha so sweeps
+ * stay responsive. Returns prev unchanged when inside the dead zone.
  */
-export function mapToCanvas(
-  nx: number,
-  ny: number,
-  cw: number,
-  ch: number
+export function smoothAdaptive(
+  prev: Point,
+  next: Point,
+  alphaSlow: number,
+  alphaFast: number,
+  fastThreshold: number,
+  deadZone: number
 ): Point {
-  const lo = (1 - REGION) / 2;
-  const tx = clamp((nx - lo) / REGION, 0, 1);
-  const ty = clamp((ny - lo) / REGION, 0, 1);
-  // Mirror X: camera is flipped for the presenter
-  return { x: (1 - tx) * cw, y: ty * ch };
-}
-
-/** Exponential smoothing — cursor moves alpha toward target each frame. */
-export function smooth(prev: Point, next: Point, alpha: number = SMOOTHING): Point {
-  return {
-    x: prev.x + alpha * (next.x - prev.x),
-    y: prev.y + alpha * (next.y - prev.y),
-  };
+  const dx = next.x - prev.x;
+  const dy = next.y - prev.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist < deadZone) return prev;
+  const alpha = dist > fastThreshold ? alphaFast : alphaSlow;
+  return { x: prev.x + alpha * dx, y: prev.y + alpha * dy };
 }
 
 /** Euclidean distance between two normalized landmarks. */

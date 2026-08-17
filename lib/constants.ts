@@ -3,6 +3,17 @@ export const CAMERA = { width: 1280, height: 720 };
 // Exponential smoothing factor for cursor position (0-1, higher = snappier)
 export const SMOOTHING = 0.35;
 
+// Fast-move smoothing: kicks in when the hand moves quickly so big sweeps
+// don't feel laggy. Balances jitter reduction vs responsiveness.
+export const SMOOTHING_FAST = 0.6;
+
+// Distance (canvas px) a fast move must exceed per frame to count as intentional
+export const FAST_MOVE_THRESHOLD = 25;
+
+// Jitter gate (canvas px): cursor ignores raw movement smaller than this,
+// killing hand tremor without affecting deliberate strokes.
+export const DEAD_ZONE = 2.5;
+
 // Center fraction of camera frame mapped to full canvas
 export const REGION = 0.75;
 

@@ -10,12 +10,14 @@ interface Props {
 }
 
 /**
- * Vertical color palette on the right edge. Hand-controlled: hover + pinch
- * or dwell selects. The chosen color becomes the stroke ink and cursor tint.
+ * Horizontal color palette along the bottom-left. Placed low so the presenter
+ * can reach it without raising their arm out of the camera's comfortable zone.
+ * Hand-controlled: hover + pinch or dwell selects. The chosen color becomes
+ * the stroke ink and cursor tint.
  */
 export default function ColorPicker({ selected, hovered, registerRect }: Props) {
   return (
-    <div className="absolute right-6 top-1/2 z-20 flex -translate-y-1/2 flex-col items-center gap-3">
+    <div className="absolute bottom-8 left-8 z-20 flex items-center gap-4">
       {COLORS.map((color) => {
         const active = selected === color;
         return (

@@ -3,8 +3,17 @@ import {
   HandLandmarker,
   type HandLandmarkerResult,
 } from '@mediapipe/tasks-vision';
-import { MODEL_URL, WASM_BASE, INDEX_TIP, THUMB_TIP } from './constants';
-import { smooth, pinchDistance } from './geometry';
+import {
+  MODEL_URL,
+  WASM_BASE,
+  INDEX_TIP,
+  THUMB_TIP,
+  SMOOTHING,
+  SMOOTHING_FAST,
+  FAST_MOVE_THRESHOLD,
+  DEAD_ZONE,
+} from './constants';
+import { smoothAdaptive, pinchDistance } from './geometry';
 import { mapWithCalibration, type CalibrationData } from './calibration';
 import type { HandFrame, Point } from './types';
 
@@ -59,7 +68,9 @@ export function extractHandFrame(
   const pinching = prev?.pinching ? dist < cal.pinchOff : dist < cal.pinchOn;
 
   const target = mapWithCalibration(rawIndex.x, rawIndex.y, canvasW, canvasH, cal);
-  const cursor = prev ? smooth(prev.cursor, target) : target;
+  const cursor = prev
+    ? smoothAdaptive(prev.cursor, target, SMOOTHING, SMOOTHING_FAST, FAST_MOVE_THRESHOLD, DEAD_ZONE)
+    : target;
 
   return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching };
 }
