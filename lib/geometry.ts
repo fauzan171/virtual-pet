@@ -1,32 +1,18 @@
 import type { Point } from './types';
 
-/**
- * Adaptive smoothing + dead-zone gate. Small movements (hand tremor) are
- * ignored entirely; fast deliberate moves get a higher alpha so sweeps
- * stay responsive. Returns prev unchanged when inside the dead zone.
- */
-export function smoothAdaptive(
-  prev: Point,
-  next: Point,
-  alphaSlow: number,
-  alphaFast: number,
-  fastThreshold: number,
-  deadZone: number,
-  still: boolean
-): Point {
-  // Still hand: freeze completely. Without this, each frame adds a tiny
-  // alpha * (target - cursor) step toward the frozen target and the cursor
-  // creeps while the hand holds a pose.
-  if (still) return prev;
-  const dx = next.x - prev.x;
-  const dy = next.y - prev.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist < deadZone) return prev;
-  const alpha = dist > fastThreshold ? alphaFast : alphaSlow;
-  return { x: prev.x + alpha * dx, y: prev.y + alpha * dy };
-}
-
 /** Euclidean distance between two normalized landmarks. */
 export function pinchDistance(a: Point, b: Point): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/**
+ * Pinch distance normalized by hand size (wrist → middle-finger MCP span).
+ * Without this the raw distance varies with how far the hand is from the
+ * camera, which flickers the pinch state mid-stroke. Normalized values are
+ * comparable across presenters and positions.
+ */
+export function normalizedPinchDistance(thumbTip: Point, indexTip: Point, wrist: Point, middleMcp: Point): number {
+  const span = Math.hypot(middleMcp.x - wrist.x, middleMcp.y - wrist.y);
+  if (span < 1e-4) return 1; // degenerate hand — report as open
+  return pinchDistance(thumbTip, indexTip) / span;
 }

@@ -12,7 +12,9 @@ export interface CalibrationData {
   pinchOff: number;
 }
 
-const KEY = 'aircanvas:calibration';
+// :v2 — pinch thresholds moved from raw landmark distance to a hand-size
+// normalized ratio; old values are incompatible and would never trigger.
+const KEY = 'aircanvas:calibration:v2';
 
 export function loadCalibration(): CalibrationData | null {
   if (typeof window === 'undefined') return null;

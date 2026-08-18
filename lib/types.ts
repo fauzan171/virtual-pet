@@ -13,10 +13,18 @@ export interface Point {
   y: number;
 }
 
+export type ShapeId = 'circle' | 'square' | 'triangle' | 'line' | 'curve';
+
+export type ToolId = 'pen' | 'eraser';
+
 export interface Stroke {
   points: Point[];
   width: number;
   color: string;
+  /** When set the stroke is a parametric shape dragged from points[0]. */
+  shape?: ShapeId;
+  /** Eraser strokes are rendered white (canvas bg) instead of ink. */
+  tool?: ToolId;
 }
 
 export interface HandFrame {
@@ -31,9 +39,9 @@ export interface HandFrame {
   pinching: boolean;
   // Gesture: only index + middle extended (two fingers up)
   twoFingers: boolean;
-  // Last raw fingertip position accepted as the cursor target.
-  // Only updated when the hand moves past the anchor threshold.
-  anchor?: Point;
+  // How many of the four fingers (index/middle/ring/pinky) are extended.
+  // Thumb is excluded — it is used for pinching.
+  fingerCount: number;
 }
 
-export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE';
+export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE' | 'CLOSE';

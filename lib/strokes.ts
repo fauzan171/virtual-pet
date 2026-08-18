@@ -34,6 +34,50 @@ export function drawStrokeSegment(
   ctx.stroke();
 }
 
+/**
+ * Parametric shapes sized by the DISTANCE from the anchor (first pinch
+ * point) to the cursor — a single scalar, so a shaking hand wobbles the
+ * outline uniformly instead of warping width and height independently.
+ * Aspect-locked shapes stay square/circular no matter the drag path.
+ */
+export function drawShape(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke
+): void {
+  const pts = stroke.points;
+  if (pts.length < 2) return;
+  const a = pts[0];
+  const b = pts[pts.length - 1];
+  const r = Math.hypot(b.x - a.x, b.y - a.y);
+  if (r < 2) return; // too small — nothing meaningful yet
+
+  ctx.strokeStyle = stroke.color;
+  ctx.lineWidth = stroke.width;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+
+  if (stroke.shape === 'circle') {
+    ctx.arc(a.x, a.y, r, 0, Math.PI * 2);
+  } else if (stroke.shape === 'square') {
+    const half = r / Math.SQRT2; // corner-to-corner drag → side from distance
+    ctx.rect(a.x - half, a.y - half, half * 2, half * 2);
+  } else if (stroke.shape === 'triangle') {
+    // Isosceles, apex up, base at anchor level, height = r
+    ctx.moveTo(a.x, a.y - r);
+    ctx.lineTo(a.x - r, a.y);
+    ctx.lineTo(a.x + r, a.y);
+    ctx.closePath();
+  } else if (stroke.shape === 'line') {
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  } else {
+    drawStrokeSegment(ctx, stroke, 1);
+    return;
+  }
+  ctx.stroke();
+}
+
 /** Full redraw — clear canvas, white background, all strokes. */
 export function redrawAll(
   ctx: CanvasRenderingContext2D,
@@ -45,7 +89,8 @@ export function redrawAll(
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, w, h);
   for (const stroke of strokes) {
-    drawStrokeSegment(ctx, stroke, 1);
+    if (stroke.shape) drawShape(ctx, stroke);
+    else drawStrokeSegment(ctx, stroke, 1);
   }
 }
 

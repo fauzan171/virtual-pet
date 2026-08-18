@@ -1,38 +1,37 @@
 export const CAMERA = { width: 1280, height: 720 };
 
-// Exponential smoothing factor for cursor position (0-1, higher = snappier)
-export const SMOOTHING = 0.28;
-
-// Fast-move smoothing: kicks in when the hand moves quickly so big sweeps
-// don't feel laggy. Slow moves keep the heavier SMOOTHING for stability.
-export const SMOOTHING_FAST = 0.5;
-
-// Distance (canvas px) per frame above which a move counts as "fast"
-export const FAST_MOVE_THRESHOLD = 18;
-
-// Jitter gate (canvas px): movement smaller than this is ignored entirely,
-// so a still hand doesn't make the cursor drift.
-export const DEAD_ZONE = 3;
-
-// Anchor dead zone (normalized 0-1 camera coords): the raw fingertip position
-// only becomes the new cursor target when it moves this far from the last
-// accepted anchor. A still hand holds its anchor, so no slow drift.
-export const RAW_ANCHOR_THRESHOLD = 0.008;
+// One-Euro Filter (pixel space). mincutoff = stillness: lower = steadier at
+// rest. beta = speed responsiveness: higher = less lag on fast sweeps.
+// Tuned from open-source air-drawing repos; see lib/one-euro.ts.
+// 1.5/0.05 = cursor tracks the hand almost 1:1 (sweep lag ~4px) while still
+// killing rest jitter (~63% reduction, step <0.25px). Tuned for "cursor
+// matches the camera" over maximum smoothness.
+export const ONE_EURO_MIN_CUTOFF = 1.5;
+export const ONE_EURO_BETA = 0.05;
+export const ONE_EURO_D_CUTOFF = 1.0;
 
 // Center fraction of camera frame mapped to full canvas
 export const REGION = 0.75;
 
-// Normalized landmark distance thresholds for pinch detection (hysteresis)
-export const PINCH_ON = 0.055;
-export const PINCH_OFF = 0.075;
+// Pinch detection thresholds (hysteresis), expressed as a ratio of the
+// thumb-tip↔index-tip distance to the hand span (wrist→middle MCP).
+// Normalizing by hand size keeps the pinch state stable regardless of how
+// far the hand is from the camera.
+export const PINCH_ON = 0.28;
+export const PINCH_OFF = 0.42;
+
+// Frames the pinch must stay released before the open stroke is committed.
+// Prevents brief pinch wobbles during fast drawing from splitting one line
+// into multiple strokes.
+export const PINCH_RELEASE_GRACE_FRAMES = 8;
 
 export const BUTTON_DEBOUNCE_MS = 500;
 export const CLEAR_CONFIRM_TIMEOUT_MS = 3000;
 
-// Two-finger gesture: consecutive frames needed to toggle the color palette,
-// and cooldown before it can toggle again (prevents double-flip)
-export const TWO_FINGER_HOLD_FRAMES = 5;
-export const TWO_FINGER_COOLDOWN_MS = 1000;
+// Multi-finger gesture menu: hold N fingers for HOLD_FRAMES to trigger.
+// 3 = shape picker, 4 = eraser toggle, 5 = undo. Thumb excluded (pinch finger).
+export const GESTURE_HOLD_FRAMES = 8;
+export const GESTURE_COOLDOWN_MS = 1200;
 
 // Dwell-to-click: hover cursor on a control for this long to activate.
 // Easier on stage than a precise pinch on a moving target.

@@ -8,14 +8,13 @@ import {
   WASM_BASE,
   INDEX_TIP,
   THUMB_TIP,
-  SMOOTHING,
-  SMOOTHING_FAST,
-  FAST_MOVE_THRESHOLD,
-  DEAD_ZONE,
-  RAW_ANCHOR_THRESHOLD,
+  ONE_EURO_MIN_CUTOFF,
+  ONE_EURO_BETA,
+  ONE_EURO_D_CUTOFF,
 } from './constants';
-import { smoothAdaptive, pinchDistance } from './geometry';
+import { normalizedPinchDistance } from './geometry';
 import { mapWithCalibration, type CalibrationData } from './calibration';
+import { OneEuroFilter } from './one-euro';
 import type { HandFrame, Point } from './types';
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
 
@@ -28,6 +27,7 @@ const RING_TIP = 16;
 const RING_PIP = 14;
 const PINKY_TIP = 20;
 const PINKY_PIP = 18;
+const MIDDLE_MCP = 9;
 
 function dist(a: NormalizedLandmark, b: NormalizedLandmark): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
@@ -38,17 +38,30 @@ function extended(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
   return dist(lm[tip], lm[WRIST]) > dist(lm[pip], lm[WRIST]) * 1.05;
 }
 
+/** Count extended fingers (index/middle/ring/pinky). Thumb excluded — it's the pinch finger. */
+function countFingers(lm: NormalizedLandmark[]): number {
+  let n = 0;
+  if (extended(lm, INDEX_TIP, INDEX_PIP)) n++;
+  if (extended(lm, MIDDLE_TIP, MIDDLE_PIP)) n++;
+  if (extended(lm, RING_TIP, RING_PIP)) n++;
+  if (extended(lm, PINKY_TIP, PINKY_PIP)) n++;
+  return n;
+}
+
 /**
  * Two-finger gesture: index + middle extended, ring + pinky curled.
  * Used to open the color palette on the canvas.
  */
-function detectTwoFingers(lm: NormalizedLandmark[]): boolean {
-  const index = extended(lm, INDEX_TIP, INDEX_PIP);
-  const middle = extended(lm, MIDDLE_TIP, MIDDLE_PIP);
-  const ring = extended(lm, RING_TIP, RING_PIP);
-  const pinky = extended(lm, PINKY_TIP, PINKY_PIP);
-  return index && middle && !ring && !pinky;
+function detectTwoFingers(count: number, lm: NormalizedLandmark[]): boolean {
+  if (count !== 2) return false;
+  // Must be index + middle specifically, not any two
+  return extended(lm, INDEX_TIP, INDEX_PIP) && extended(lm, MIDDLE_TIP, MIDDLE_PIP);
 }
+
+// ponytail: module-level filters assume a single presenter (numHands: 1);
+// move to per-instance state if multi-hand ever lands.
+const filterX = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
+const filterY = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
 
 /** Create the MediaPipe Hand Landmarker. Falls back GPU -> CPU silently. */
 export async function createHandLandmarker(): Promise<HandLandmarker> {
@@ -85,6 +98,9 @@ export function extractHandFrame(
 ): HandFrame {
   const landmarks = result.landmarks?.[0];
   if (!landmarks) {
+    // Hand left — reset so re-acquire doesn't interpolate a giant jump
+    filterX.reset();
+    filterY.reset();
     return {
       detected: false,
       cursor: prev?.cursor ?? { x: canvasW / 2, y: canvasH / 2 },
@@ -93,30 +109,35 @@ export function extractHandFrame(
       pinchDist: prev?.pinchDist ?? 1,
       pinching: false,
       twoFingers: false,
+      fingerCount: 0,
     };
   }
 
   const rawIndex: Point = { x: landmarks[INDEX_TIP].x, y: landmarks[INDEX_TIP].y };
   const rawThumb: Point = { x: landmarks[THUMB_TIP].x, y: landmarks[THUMB_TIP].y };
-  const dist = pinchDistance(rawIndex, rawThumb);
+  // Hand-size-normalized so pinch state doesn't flicker when the presenter
+  // moves closer to / farther from the camera mid-stroke.
+  const dist = normalizedPinchDistance(
+    rawThumb,
+    rawIndex,
+    { x: landmarks[WRIST].x, y: landmarks[WRIST].y },
+    { x: landmarks[MIDDLE_MCP].x, y: landmarks[MIDDLE_MCP].y }
+  );
 
   // Hysteresis: different thresholds for activation vs release
   const pinching = prev?.pinching ? dist < cal.pinchOff : dist < cal.pinchOn;
 
-  // Anchor: the target only updates when the raw fingertip moves past the
-  // threshold from the last accepted position. A still hand holds its anchor,
-  // and the cursor freezes entirely — no smoothing creep, no tremor drift.
-  const prevAnchor = prev?.anchor ?? rawIndex;
-  const rawMove = Math.hypot(rawIndex.x - prevAnchor.x, rawIndex.y - prevAnchor.y);
-  const still = rawMove <= RAW_ANCHOR_THRESHOLD;
-  const anchor = still ? prevAnchor : rawIndex;
+  // One-Euro Filter in pixel space: heavy smoothing at rest (no shake),
+  // light smoothing at speed (no lag). Filter after mapping so beta's units
+  // match the drawing space.
+  const target = mapWithCalibration(rawIndex.x, rawIndex.y, canvasW, canvasH, cal);
+  const cursor = {
+    x: filterX.filter(target.x, performance.now()),
+    y: filterY.filter(target.y, performance.now()),
+  };
 
-  const target = mapWithCalibration(anchor.x, anchor.y, canvasW, canvasH, cal);
-  const cursor = prev
-    ? smoothAdaptive(prev.cursor, target, SMOOTHING, SMOOTHING_FAST, FAST_MOVE_THRESHOLD, DEAD_ZONE, still)
-    : target;
+  const fingerCount = countFingers(landmarks);
+  const twoFingers = detectTwoFingers(fingerCount, landmarks);
 
-  const twoFingers = detectTwoFingers(landmarks);
-
-  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, anchor };
+  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, fingerCount };
 }

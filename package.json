@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "check:one-euro": "node --experimental-strip-types scripts/check-one-euro.ts",
+    "check:voice-guard": "node --experimental-strip-types scripts/check-voice-guard.ts"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",
