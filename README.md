@@ -2,7 +2,7 @@
 
 Draw your idea in the air. Let AI bring it to life.
 
-A fullscreen web demo for live stages: a presenter stands in front of a laptop webcam, draws in the air with their index finger (pinch to draw), then sends the sketch to `wan2.7-image-pro` to generate a polished image. No mouse, tablet, or stylus needed.
+A fullscreen web demo for live stages: a presenter stands in front of a laptop webcam, draws in the air with their index finger (pinch to draw), then sends the sketch to `qwen-image-3.0-pro` to generate a polished image. No mouse, tablet, or stylus needed.
 
 Full product spec: [PRD-ai-air-canvas.md](./PRD-ai-air-canvas.md)
 
@@ -24,12 +24,12 @@ Open http://localhost:3000, allow camera access, show your hand.
 Copy `.env.local.example` to `.env.local` and fill in:
 
 ```
-QWEN_API_URL=...
+QWEN_API_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY=...
-QWEN_MODEL=wan2.7-image-pro
+QWEN_MODEL=qwen-image-3.0-pro
 ```
 
-Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` — verify it against the real provider API before the show (model endpoint was unverified at build time).
+Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` (OpenAI-compatible mode, DashScope-native content items) — verified against the live endpoint, re-verify with `npm run check:qwen`.
 
 ## Stage crew keyboard failsafes
 
@@ -64,7 +64,7 @@ Spoken subjects pass through a safety layer (`sanitizeSubject` in `lib/voice.ts`
 
 ## Finger gestures
 
-Everything runs through the camera — hold the pose for a moment to trigger it. Thumb is the pinch finger and doesn't count.
+Everything runs through the camera — hold the pose for a moment to trigger it. Thumb counts only when it's out (pinching tucks it in), so the counts below mean "fingers raised".
 
 | Fingers | Action |
 |---|---|
@@ -83,7 +83,9 @@ The canvas has **no always-visible buttons** — everything lives behind the 5-f
 
 ## Cursor smoothing
 
-The cursor runs through a One-Euro Filter (`lib/one-euro.ts`) — the standard for noisy hand tracking: heavy smoothing while the hand is still (no shake), light smoothing during fast moves (no lag, straight lines stay straight). Tunables live in `lib/constants.ts` as `ONE_EURO_MIN_CUTOFF` (lower = steadier at rest) and `ONE_EURO_BETA` (higher = tracks the hand more closely at speed). Verify with `npm run check:one-euro`.
+The cursor runs through a One-Euro Filter (`lib/one-euro.ts`) — the standard for noisy hand tracking: heavy smoothing while the hand is still (no shake), light smoothing during fast moves (no lag, straight lines stay straight). Tunables live in `lib/constants.ts` as `ONE_EURO_MIN_CUTOFF` (lower = steadier at rest) and `ONE_EURO_BETA` (higher = tracks the hand more closely at speed).
+
+On top of that, stroke points pass through a **pen deadzone** (`PEN_DEADZONE_PX` in `lib/constants.ts`, applied in `applyPenDeadzone`): movement smaller than the deadzone never joins the stroke, so a held hand draws no wiggle — like a real pen whose tip doesn't slide. Slow deliberate moves accumulate past the deadzone and still register. Verify both with `npm run check:one-euro`.
 
 ## Show flow
 

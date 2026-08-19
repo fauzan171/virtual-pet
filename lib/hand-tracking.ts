@@ -27,6 +27,7 @@ const RING_TIP = 16;
 const RING_PIP = 14;
 const PINKY_TIP = 20;
 const PINKY_PIP = 18;
+const PINKY_MCP = 17;
 const MIDDLE_MCP = 9;
 
 function dist(a: NormalizedLandmark, b: NormalizedLandmark): number {
@@ -38,9 +39,17 @@ function extended(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
   return dist(lm[tip], lm[WRIST]) > dist(lm[pip], lm[WRIST]) * 1.05;
 }
 
-/** Count extended fingers (index/middle/ring/pinky). Thumb excluded — it's the pinch finger. */
+/** Thumb is out when its tip sits well beyond the palm's far edge (pinky MCP).
+ * Old check compared tip↔wrist against tip↔index base; it failed on open
+ * palms facing the camera: the tip lands near the wrist line, so the thumb
+ * read as tucked in, the count capped at 4, and the 5-finger menu never fired. */
+function thumbOut(lm: NormalizedLandmark[]): boolean {
+  return dist(lm[THUMB_TIP], lm[PINKY_MCP]) > dist(lm[WRIST], lm[PINKY_MCP]) * 0.95;
+}
+
+/** Count extended fingers: 4 fingers + thumb. 5 = open palm (menu). */
 function countFingers(lm: NormalizedLandmark[]): number {
-  let n = 0;
+  let n = thumbOut(lm) ? 1 : 0;
   if (extended(lm, INDEX_TIP, INDEX_PIP)) n++;
   if (extended(lm, MIDDLE_TIP, MIDDLE_PIP)) n++;
   if (extended(lm, RING_TIP, RING_PIP)) n++;
@@ -110,6 +119,7 @@ export function extractHandFrame(
       pinching: false,
       twoFingers: false,
       fingerCount: 0,
+      thumbOut: false,
     };
   }
 
@@ -136,8 +146,10 @@ export function extractHandFrame(
     y: filterY.filter(target.y, performance.now()),
   };
 
+  const out = thumbOut(landmarks);
   const fingerCount = countFingers(landmarks);
-  const twoFingers = detectTwoFingers(fingerCount, landmarks);
+  // twoFingers means "2 raised fingers" — exclude the thumb from the count
+  const twoFingers = detectTwoFingers(fingerCount - (out ? 1 : 0), landmarks);
 
-  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, fingerCount };
+  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, fingerCount, thumbOut: out };
 }

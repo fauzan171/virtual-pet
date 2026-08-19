@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "check:one-euro": "node --experimental-strip-types scripts/check-one-euro.ts",
-    "check:voice-guard": "node --experimental-strip-types scripts/check-voice-guard.ts"
+    "check:voice-guard": "node --experimental-strip-types scripts/check-voice-guard.ts",
+    "check:qwen": "node --experimental-strip-types scripts/check-qwen-provider.ts"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^1.0.1",

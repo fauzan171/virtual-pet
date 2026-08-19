@@ -37,6 +37,7 @@ import {
   type CalibrationData,
 } from '@/lib/calibration';
 import { PINCH_ON, PINCH_OFF, PINCH_RELEASE_GRACE_FRAMES } from '@/lib/constants';
+import { applyPenDeadzone } from '@/lib/geometry';
 import CalibrationOverlay, { type CalibrationPhase } from './CalibrationOverlay';
 
 export default function AirCanvas() {
@@ -595,15 +596,17 @@ export default function AirCanvas() {
       cursorX.set(vx);
       cursorY.set(vy);
 
-      // Finger-count gesture menu (thumb excluded, it is the pinch finger):
+      // Finger-count gesture menu. fingerCount INCLUDES the thumb when it's
+      // out (pinch tucks it in), so subtract thumbOut to get raised fingers:
       //   2 (index+middle) = color palette, 3 = shape picker, 4 = eraser
       //   toggle, 5 (open palm) = main menu popup.
       // Hold for GESTURE_HOLD_FRAMES to fire; cooldown stops re-trigger while
       // the hand is still in the pose.
       if (frame.detected && stateRef.current === 'DRAWING' && !calModeRef.current) {
+        const raised = frame.fingerCount - (frame.thumbOut ? 1 : 0);
         // Only count 2 when it is specifically index+middle (twoFingers);
         // any other 2-finger combo is ambiguous and should not trigger.
-        const count = frame.fingerCount === 2 ? (frame.twoFingers ? 2 : 0) : frame.fingerCount;
+        const count = raised === 2 ? (frame.twoFingers ? 2 : 0) : raised;
         if (count >= 2 && count <= 5) {
           if (count === lastGestureCountRef.current) {
             gestureFramesRef.current++;
@@ -704,18 +707,24 @@ export default function AirCanvas() {
             };
             lastDrawnIndexRef.current = 0;
           } else {
-            currentStrokeRef.current.points.push(frame.cursor);
-            if (ctx) {
-              if (currentStrokeRef.current.shape) {
-                // ponytail: full redraw per frame for live shape preview;
-                // swap to an offscreen ghost layer if stroke count grows large
-                const [cw, ch] = drawing.size();
-                redrawAll(ctx, [...strokesRef.current, currentStrokeRef.current], cw, ch);
-              } else {
-                drawStrokeSegment(ctx, currentStrokeRef.current, lastDrawnIndexRef.current);
+            const stroke = currentStrokeRef.current;
+            // Deadzone: jitter below PEN_DEADZONE_PX never joins the stroke —
+            // the pen tip holds still when the hand does.
+            const committed = applyPenDeadzone(frame.cursor, stroke.points[stroke.points.length - 1]);
+            if (committed) {
+              stroke.points.push(committed);
+              if (ctx) {
+                if (stroke.shape) {
+                  // ponytail: full redraw per committed point for live shape
+                  // preview; swap to offscreen ghost layer if strokes grow large
+                  const [cw, ch] = drawing.size();
+                  redrawAll(ctx, [...strokesRef.current, stroke], cw, ch);
+                } else {
+                  drawStrokeSegment(ctx, stroke, lastDrawnIndexRef.current);
+                }
               }
+              lastDrawnIndexRef.current = stroke.points.length - 1;
             }
-            lastDrawnIndexRef.current = currentStrokeRef.current.points.length - 1;
           }
         } else if (currentStrokeRef.current) {
           // Grace period: brief pinch wobbles during fast drawing must not

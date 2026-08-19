@@ -71,4 +71,22 @@ function assert(cond: boolean, msg: string): void {
   console.log('reset: first sample passes through untouched');
 }
 
+// 4. Pen deadzone: jitter swallowed, real moves pass, anchor accumulates
+{
+  const { applyPenDeadzone } = await import('../lib/geometry.ts');
+  const anchor = { x: 500, y: 500 };
+  assert(applyPenDeadzone({ x: 501.5, y: 500 }, anchor) === null, 'jitter < deadzone swallowed');
+  assert(applyPenDeadzone({ x: 502.5, y: 502.5 }, anchor) !== null, 'move > deadzone committed');
+  // Slow steady move: 1px steps must accumulate past the deadzone eventually
+  const pts = [];
+  let a = { x: 0, y: 0 };
+  for (let i = 1; i <= 100; i++) {
+    const c = { x: i, y: 0 };
+    const p = applyPenDeadzone(c, a);
+    if (p) { pts.push(p); a = p; }
+  }
+  assert(pts.length >= 30, `slow move committed too few points: ${pts.length}`);
+  console.log('pen deadzone: jitter swallowed, slow move committed', pts.length, 'points over 100 frames');
+}
+
 console.log('all one-euro checks pass');

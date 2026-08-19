@@ -2,13 +2,18 @@ export const CAMERA = { width: 1280, height: 720 };
 
 // One-Euro Filter (pixel space). mincutoff = stillness: lower = steadier at
 // rest. beta = speed responsiveness: higher = less lag on fast sweeps.
-// Tuned from open-source air-drawing repos; see lib/one-euro.ts.
-// 1.5/0.05 = cursor tracks the hand almost 1:1 (sweep lag ~4px) while still
-// killing rest jitter (~63% reduction, step <0.25px). Tuned for "cursor
-// matches the camera" over maximum smoothness.
-export const ONE_EURO_MIN_CUTOFF = 1.5;
-export const ONE_EURO_BETA = 0.05;
+// 0.5/0.04 = pen feel: heavy jitter kill at rest, and the adaptive cutoff
+// stays LOW during motion so hand tremor is smoothed out of strokes.
+// Previously beta was 0.12 — cutoff spiked during movement and the filter
+// passed tremor straight through, making strokes shaky.
+export const ONE_EURO_MIN_CUTOFF = 0.5;
+export const ONE_EURO_BETA = 0.04;
 export const ONE_EURO_D_CUTOFF = 1.0;
+
+// Minimum cursor travel before a point joins the live stroke. Swallows the
+// ~1-2px of residual tracking jitter so a held hand draws no wiggle — like
+// a real pen whose tip doesn't slide while the hand holds position.
+export const PEN_DEADZONE_PX = 3.0;
 
 // Center fraction of camera frame mapped to full canvas
 export const REGION = 0.75;

@@ -1,14 +1,14 @@
 /**
- * Server-side adapter for the wan2.7-image-pro image generation API.
+ * Server-side adapter for qwen-image-3.0-pro via the Alibaba MaaS gateway
+ * (OpenAI-compatible mode). Verified against the live endpoint 2026-08-19.
  *
- * ⚠ Model API shape unverified (model not found in public docs at pivot time).
- * This adapter implements the common DashScope multimodal-generation pattern:
- *   POST {QWEN_API_URL} with role-based messages carrying {image: dataUrl} + {text: prompt}.
- * If the real provider differs (e.g. input.reference_image / a polling task API),
- * only this file changes — the route and frontend stay untouched.
+ * Request:  POST {QWEN_API_URL}/chat/completions
+ * Content uses DashScope-native items: [{"image": dataUrl}, {"text": prompt}]
+ * — the OpenAI {"type":"image_url",...} shape is NOT accepted by image models.
+ * Response: choices[0].message.content[0].image → signed OSS URL.
  */
 
-import { DEFAULT_PROMPT, STYLES, type StyleKey } from './prompt';
+import { DEFAULT_PROMPT, STYLES, type StyleKey } from './prompt.ts';
 
 export interface GenerateOptions {
   style?: string;
@@ -19,7 +19,6 @@ export interface GenerateResult {
 }
 
 function buildPrompt(style?: string): string {
-  // Style arrives as a key ("REALISTIC"); send the human description instead
   const desc = style && style in STYLES ? STYLES[style as StyleKey] : null;
   const styleLine = desc ? `\n\nApply this visual style: ${desc}.` : '';
   return DEFAULT_PROMPT + styleLine;
@@ -37,19 +36,20 @@ export async function generateImage(
   sketchPng: Buffer,
   options: GenerateOptions = {}
 ): Promise<GenerateResult> {
-  const apiUrl = process.env.QWEN_API_URL;
+  const baseUrl = process.env.QWEN_API_URL;
   const apiKey = process.env.QWEN_API_KEY;
-  const model = process.env.QWEN_MODEL ?? 'wan2.7-image-pro';
-  if (!apiUrl || !apiKey) throw new Error('Provider not configured');
+  const model = process.env.QWEN_MODEL ?? 'qwen-image-3.0-pro';
+  if (!baseUrl || !apiKey) throw new Error('Provider not configured');
 
   const dataUrl = `data:image/png;base64,${sketchPng.toString('base64')}`;
   const prompt = buildPrompt(options.style);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
+  // ponytail: image gen observed at 20-90s; raise if larger resolutions land
+  const timeout = setTimeout(() => controller.abort(), 180_000);
 
   try {
-    const res = await fetch(apiUrl, {
+    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -57,14 +57,12 @@ export async function generateImage(
       },
       body: JSON.stringify({
         model,
-        input: {
-          messages: [
-            {
-              role: 'user',
-              content: [{ image: dataUrl }, { text: prompt }],
-            },
-          ],
-        },
+        messages: [
+          {
+            role: 'user',
+            content: [{ image: dataUrl }, { text: prompt }],
+          },
+        ],
       }),
       signal: controller.signal,
     });
@@ -83,16 +81,21 @@ export async function generateImage(
   }
 }
 
-/** Ponytail: tolerates several common response shapes; tighten once real API verified. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractImageUrl(data: any): string | null {
+interface ContentItem {
+  image?: string;
+}
+interface ProviderShape {
+  output?: { choices?: { message?: { content?: ContentItem[] } }[] };
+  choices?: { message?: { content?: ContentItem[] } }[];
+  data?: { url?: string }[];
+}
+
+function extractImageUrl(data: unknown): string | null {
+  const d = data as ProviderShape;
   return (
-    data?.output?.results?.[0]?.url ??
-    data?.output?.image_url ??
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    data?.output?.choices?.[0]?.message?.content?.find((c: any) => c.image)?.image ??
-    data?.images?.[0]?.url ??
-    data?.data?.[0]?.url ??
+    d?.output?.choices?.[0]?.message?.content?.find((c) => c.image)?.image ??
+    d?.choices?.[0]?.message?.content?.find((c) => c.image)?.image ??
+    d?.data?.[0]?.url ??
     null
   );
 }

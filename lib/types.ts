@@ -39,9 +39,10 @@ export interface HandFrame {
   pinching: boolean;
   // Gesture: only index + middle extended (two fingers up)
   twoFingers: boolean;
-  // How many of the four fingers (index/middle/ring/pinky) are extended.
-  // Thumb is excluded — it is used for pinching.
+  // How many fingers are extended — INCLUDING the thumb when it is out.
+  // During a pinch the thumb tucks, so raised fingers = fingerCount - thumbOut.
   fingerCount: number;
+  thumbOut: boolean;
 }
 
 export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE' | 'CLOSE';
