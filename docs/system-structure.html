@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <title>Struktur Sistem - AI Air Canvas</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 18mm 16mm;
+      }
+      :root {
+        --ink: #18212b;
+        --muted: #5d6b78;
+        --accent: #0d6b70;
+        --line: #d9e2e7;
+        --soft: #eef6f5;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        line-height: 1.45;
+        font-size: 10.5pt;
+        margin: 0;
+      }
+      h1 {
+        font-size: 28pt;
+        line-height: 1.05;
+        margin: 0 0 8px;
+        color: var(--accent);
+      }
+      h2 {
+        font-size: 17pt;
+        margin: 24px 0 9px;
+        padding-bottom: 4px;
+        border-bottom: 2px solid var(--accent);
+        page-break-after: avoid;
+      }
+      h3 {
+        font-size: 12.5pt;
+        margin: 13px 0 3px;
+        color: var(--accent);
+        page-break-after: avoid;
+      }
+      p {
+        margin: 5px 0 9px;
+      }
+      .subtitle {
+        color: var(--muted);
+        font-size: 13pt;
+        margin-bottom: 22px;
+      }
+      .cover {
+        border-left: 7px solid var(--accent);
+        padding: 18px 20px;
+        background: var(--soft);
+        margin-bottom: 22px;
+      }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        color: var(--muted);
+        font:
+          700 8pt Arial,
+          sans-serif;
+        margin-bottom: 10px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px 22px;
+      }
+      .item {
+        break-inside: avoid;
+        margin-bottom: 5px;
+      }
+      .item strong {
+        font-family: Arial, sans-serif;
+        font-size: 9.5pt;
+      }
+      .item span {
+        color: var(--muted);
+      }
+      code {
+        font-family: "Courier New", monospace;
+        font-size: 8.5pt;
+        color: #263746;
+      }
+      .flow {
+        background: #f5f8f9;
+        border: 1px solid var(--line);
+        padding: 12px 15px;
+        font:
+          9pt "Courier New",
+          monospace;
+        white-space: pre-wrap;
+        break-inside: avoid;
+      }
+      ul {
+        margin: 5px 0 10px 18px;
+        padding: 0;
+      }
+      li {
+        margin: 2px 0;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 8px 0 14px;
+        font-size: 9pt;
+      }
+      th {
+        background: var(--accent);
+        color: white;
+        text-align: left;
+      }
+      th,
+      td {
+        border: 1px solid var(--line);
+        padding: 6px 7px;
+        vertical-align: top;
+      }
+      tr {
+        break-inside: avoid;
+      }
+      .footer {
+        margin-top: 25px;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font:
+          8pt Arial,
+          sans-serif;
+      }
+      .page-break {
+        page-break-before: always;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="cover">
+      <div class="eyebrow">Dokumentasi Teknis</div>
+      <h1>Struktur Sistem<br />AI Air Canvas</h1>
+      <div class="subtitle">
+        Aplikasi menggambar di udara dengan webcam, MediaPipe Hand Landmarker,
+        dan AI image generation.
+      </div>
+      <p>
+        <strong>Project:</strong> virtual-pet &nbsp;|&nbsp;
+        <strong>Stack:</strong> Next.js, React, TypeScript
+      </p>
+    </section>
+
+    <h2>1. Struktur Utama</h2>
+    <div class="flow">
+      virtual-pet/ ├── app/ # Halaman dan API Next.js ├── components/ # Komponen
+      UI React ├── lib/ # Logika bisnis dan utilitas utama ├── public/ # Asset
+      statis ├── scripts/ # Skrip pengecekan manual └── file konfigurasi #
+      Next.js, TypeScript, ESLint, PostCSS
+    </div>
+
+    <h2>2. Folder <code>app/</code></h2>
+    <div class="item">
+      <strong>app/page.tsx</strong><br /><span
+        >Entry point halaman utama; merender komponen AirCanvas.</span
+      >
+    </div>
+    <div class="item">
+      <strong>app/layout.tsx</strong><br /><span
+        >Layout global, metadata, dan struktur HTML dasar.</span
+      >
+    </div>
+    <div class="item">
+      <strong>app/globals.css</strong><br /><span
+        >Style global, layout fullscreen, warna, dan animasi.</span
+      >
+    </div>
+    <div class="item">
+      <strong>app/api/generate/route.ts</strong><br /><span
+        >Endpoint POST /api/generate. Memvalidasi PNG sketch, membersihkan
+        subject voice command, memanggil engine AI, dan menyediakan mock
+        mode.</span
+      >
+    </div>
+
+    <h2>3. Folder <code>components/</code></h2>
+    <div class="grid">
+      <div class="item">
+        <strong>AirCanvas.tsx</strong><br /><span
+          >Controller utama: webcam, hand tracking, gesture, drawing,
+          calibration, voice, dan state aplikasi.</span
+        >
+      </div>
+      <div class="item">
+        <strong>DrawingCanvas.tsx</strong><br /><span
+          >Canvas HTML untuk menyimpan dan merender stroke.</span
+        >
+      </div>
+      <div class="item">
+        <strong>HandCursor.tsx</strong><br /><span
+          >Kursor virtual berdasarkan ujung telunjuk.</span
+        >
+      </div>
+      <div class="item">
+        <strong>CameraPreview.tsx</strong><br /><span
+          >Preview webcam presenter.</span
+        >
+      </div>
+      <div class="item">
+        <strong>MainMenu.tsx</strong><br /><span
+          >Menu utama yang dibuka dengan gesture lima jari.</span
+        >
+      </div>
+      <div class="item">
+        <strong>ColorPicker.tsx</strong><br /><span>Pemilih warna tinta.</span>
+      </div>
+      <div class="item">
+        <strong>ShapePicker.tsx</strong><br /><span
+          >Pemilih garis, kurva, lingkaran, kotak, dan segitiga.</span
+        >
+      </div>
+      <div class="item">
+        <strong>CalibrationOverlay.tsx</strong><br /><span
+          >UI kalibrasi area tangan dan threshold pinch.</span
+        >
+      </div>
+      <div class="item">
+        <strong>LoadingExperience.tsx</strong><br /><span
+          >Tampilan saat gambar sedang dibuat AI.</span
+        >
+      </div>
+      <div class="item">
+        <strong>StatusBanner.tsx</strong><br /><span
+          >Status kamera, tracking, drawing, dan generation.</span
+        >
+      </div>
+      <div class="item">
+        <strong>DebugPanel.tsx</strong><br /><span
+          >Informasi debug seperti FPS, landmark, dan frame tangan.</span
+        >
+      </div>
+    </div>
+
+    <h2 class="page-break">4. Folder <code>lib/</code></h2>
+    <div class="grid">
+      <div class="item">
+        <strong>hand-tracking.ts</strong><br /><span
+          >Integrasi MediaPipe Hand Landmarker, ekstraksi landmark, pinch, dan
+          gesture jari.</span
+        >
+      </div>
+      <div class="item">
+        <strong>strokes.ts</strong><br /><span
+          >Mengelola pembuatan, penyimpanan, dan render ulang stroke.</span
+        >
+      </div>
+      <div class="item">
+        <strong>geometry.ts</strong><br /><span
+          >Perhitungan jarak, pinch, deadzone, dan transformasi titik.</span
+        >
+      </div>
+      <div class="item">
+        <strong>calibration.ts</strong><br /><span
+          >Kalibrasi area kerja tangan dan threshold pinch.</span
+        >
+      </div>
+      <div class="item">
+        <strong>one-euro.ts</strong><br /><span
+          >Filter untuk mengurangi jitter dan menghaluskan kursor.</span
+        >
+      </div>
+      <div class="item">
+        <strong>constants.ts</strong><br /><span
+          >Konstanta model MediaPipe, kamera, gesture, warna, dan stroke.</span
+        >
+      </div>
+      <div class="item">
+        <strong>types.ts</strong><br /><span
+          >Tipe TypeScript seperti AppState, Point, Stroke, HandFrame, dan
+          ShapeId.</span
+        >
+      </div>
+      <div class="item">
+        <strong>agent.ts</strong><br /><span
+          >Mengatur pemilihan image generation engine.</span
+        >
+      </div>
+      <div class="item">
+        <strong>qwen-provider.ts</strong><br /><span
+          >Provider Qwen untuk image-to-image generation; key tetap di
+          server.</span
+        >
+      </div>
+      <div class="item">
+        <strong>pollinations.ts</strong><br /><span
+          >Fallback image generation gratis menggunakan Pollinations.</span
+        >
+      </div>
+      <div class="item">
+        <strong>prompt.ts</strong><br /><span
+          >Definisi style dan pembuatan prompt AI.</span
+        >
+      </div>
+      <div class="item">
+        <strong>voice.ts</strong><br /><span
+          >Voice command berbasis Web Speech API dan sanitasi subject.</span
+        >
+      </div>
+      <div class="item">
+        <strong>sound.ts</strong><br /><span
+          >Efek suara dan status audio aplikasi.</span
+        >
+      </div>
+    </div>
+
+    <h2>5. Folder <code>scripts/</code></h2>
+    <div class="item">
+      <strong>check-one-euro.ts</strong> — Menguji smoothing filter dan pen
+      deadzone.
+    </div>
+    <div class="item">
+      <strong>check-qwen-provider.ts</strong> — Menguji koneksi dan format
+      request Qwen.
+    </div>
+    <div class="item">
+      <strong>check-voice-guard.ts</strong> — Menguji sanitasi voice command.
+    </div>
+
+    <h2>6. File Konfigurasi dan Dokumentasi</h2>
+    <table>
+      <tr>
+        <th>File</th>
+        <th>Fungsi</th>
+      </tr>
+      <tr>
+        <td><code>package.json</code></td>
+        <td>Dependency dan perintah npm.</td>
+      </tr>
+      <tr>
+        <td><code>next.config.ts</code></td>
+        <td>Konfigurasi Next.js.</td>
+      </tr>
+      <tr>
+        <td><code>tsconfig.json</code></td>
+        <td>Konfigurasi TypeScript dan alias import.</td>
+      </tr>
+      <tr>
+        <td><code>eslint.config.mjs</code></td>
+        <td>Konfigurasi linting.</td>
+      </tr>
+      <tr>
+        <td><code>postcss.config.mjs</code></td>
+        <td>Konfigurasi PostCSS dan Tailwind.</td>
+      </tr>
+      <tr>
+        <td><code>README.md</code></td>
+        <td>
+          Instalasi, penggunaan, gesture, voice command, dan keyboard failsafe.
+        </td>
+      </tr>
+      <tr>
+        <td><code>PRD-ai-air-canvas.md</code></td>
+        <td>Product Requirement Document dan spesifikasi fitur.</td>
+      </tr>
+      <tr>
+        <td><code>AGENTS.md</code></td>
+        <td>Aturan kerja agent untuk repository.</td>
+      </tr>
+      <tr>
+        <td><code>CLAUDE.md</code></td>
+        <td>Referensi ke AGENTS.md.</td>
+      </tr>
+    </table>
+
+    <h2>7. Alur Sistem</h2>
+    <div class="flow">
+      Webcam ↓ MediaPipe Hand Landmarker ↓ HandFrame + gesture detection ↓ Pinch
+      / finger gesture ↓ DrawingCanvas ↓ PNG sketch ↓ POST /api/generate ↓ Qwen
+      atau Pollinations ↓ Result screen
+    </div>
+
+    <h2>8. Ringkasan Arsitektur</h2>
+    <p>
+      <code>AirCanvas.tsx</code> berperan sebagai controller utama. Komponen di
+      <code>components/</code> menangani tampilan, sedangkan modul di
+      <code>lib/</code> menangani hand tracking, stroke, kalibrasi, suara,
+      prompt, dan integrasi AI.
+    </p>
+    <p>
+      Webcam diproses lokal di browser menggunakan MediaPipe. Data video tidak
+      dikirim ke server. Hanya PNG sketch yang dikirim ke endpoint generation
+      ketika presenter memilih GENERATE.
+    </p>
+
+    <div class="footer">
+      Dokumentasi dibuat dari struktur aktual project AI Air Canvas · 19 Agustus
+      2026
+    </div>
+  </body>
+</html>

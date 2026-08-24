@@ -1,54 +1,40 @@
-export const CAMERA = { width: 1280, height: 720 };
+// Camera capture size — 640x480 optimizes MediaPipe JS throughput by ~2.5x 
+// while HTML5 Canvas stays native Full HD / Fullscreen.
+export const CAMERA = { width: 640, height: 480 };
 
-// One-Euro Filter (pixel space). mincutoff = stillness: lower = steadier at
-// rest. beta = speed responsiveness: higher = less lag on fast sweeps.
-// 0.5/0.04 = pen feel: heavy jitter kill at rest, and the adaptive cutoff
-// stays LOW during motion so hand tremor is smoothed out of strokes.
-// Previously beta was 0.12 — cutoff spiked during movement and the filter
-// passed tremor straight through, making strokes shaky.
-export const ONE_EURO_MIN_CUTOFF = 0.5;
-export const ONE_EURO_BETA = 0.04;
+// One-Euro Filter: MIN_CUTOFF = stillness steady, BETA = zero-lag tracking at speed.
+export const ONE_EURO_MIN_CUTOFF = 1.0;
+export const ONE_EURO_BETA = 0.045;
 export const ONE_EURO_D_CUTOFF = 1.0;
 
-// Minimum cursor travel before a point joins the live stroke. Swallows the
-// ~1-2px of residual tracking jitter so a held hand draws no wiggle — like
-// a real pen whose tip doesn't slide while the hand holds position.
-export const PEN_DEADZONE_PX = 3.0;
+// Pen deadzone: Swallows micro-tracking jitter without delaying initial stroke draw.
+export const PEN_DEADZONE_PX = 1.8;
 
-// Center fraction of camera frame mapped to full canvas
-export const REGION = 0.75;
+// Center 85% fraction of camera frame mapped to full canvas bounds for easier reach.
+export const REGION = 0.85;
 
-// Pinch detection thresholds (hysteresis), expressed as a ratio of the
-// thumb-tip↔index-tip distance to the hand span (wrist→middle MCP).
-// Normalizing by hand size keeps the pinch state stable regardless of how
-// far the hand is from the camera.
-export const PINCH_ON = 0.28;
+// Pinch thresholds normalized by hand-span ratio (wrist -> middle MCP).
+export const PINCH_ON = 0.32;
 export const PINCH_OFF = 0.42;
 
-// Frames the pinch must stay released before the open stroke is committed.
-// Prevents brief pinch wobbles during fast drawing from splitting one line
-// into multiple strokes.
-export const PINCH_RELEASE_GRACE_FRAMES = 8;
+// Grace period before line commit on pinch release (~100ms at 30fps).
+export const PINCH_RELEASE_GRACE_FRAMES = 3;
 
-export const BUTTON_DEBOUNCE_MS = 500;
-export const CLEAR_CONFIRM_TIMEOUT_MS = 3000;
+export const BUTTON_DEBOUNCE_MS = 250;
+export const CLEAR_CONFIRM_TIMEOUT_MS = 2000;
 
-// Multi-finger gesture menu: hold N fingers for HOLD_FRAMES to trigger.
-// 3 = shape picker, 4 = eraser toggle, 5 = undo. Thumb excluded (pinch finger).
-export const GESTURE_HOLD_FRAMES = 8;
-export const GESTURE_COOLDOWN_MS = 1200;
+// Multi-finger pose gestures (2 frames hold for snappy response).
+export const GESTURE_HOLD_FRAMES = 2;
+export const GESTURE_COOLDOWN_MS = 350;
 
-// Dwell-to-click: hover cursor on a control for this long to activate.
-// Easier on stage than a precise pinch on a moving target.
-export const DWELL_CLICK_MS = 700;
+// Dwell-to-click activation time for hover interactions.
+export const DWELL_CLICK_MS = 350;
 
-// Frames of lost tracking tolerated before committing the open stroke.
-// Long enough (~1s at 30fps) to ride out brief detection dropouts while
-// drawing fast or when the hand briefly occludes itself.
-export const HAND_LOST_GRACE_FRAMES = 30;
+// Tolerance frames when hand momentarily leaves video feed before committing stroke.
+export const HAND_LOST_GRACE_FRAMES = 12;
 
-// Extra pixels added around every virtual button for hit-testing
-export const BUTTON_HIT_PAD = 30;
+// Extra padding around virtual buttons for reliable hit-testing on stage.
+export const BUTTON_HIT_PAD = 40;
 
 export const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -56,10 +42,17 @@ export const WASM_BASE =
   'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
 
 export const INK = '#1a1a2e';
-export const STROKE_WIDTH = 5;
+export const STROKE_WIDTH = 6;
 
-// Palette for the on-stage color picker (INK first = default).
-// No white — canvas is white, stroke would vanish.
+export const BRUSH_SIZES = [
+  { id: 'fine', size: 3, label: 'Fine (3px)' },
+  { id: 'medium', size: 6, label: 'Medium (6px)' },
+  { id: 'bold', size: 12, label: 'Bold (12px)' },
+  { id: 'marker', size: 22, label: 'Marker (22px)' },
+] as const;
+
+export type BrushSizeId = (typeof BRUSH_SIZES)[number]['id'];
+
 export const COLORS = [
   INK,
   '#e63946', // red
@@ -69,8 +62,34 @@ export const COLORS = [
   '#1d6fe0', // blue
   '#7b2cbf', // purple
   '#f72585', // pink
+  '#00f0ff', // electric cyan
+  '#39ff14', // neon lime
 ];
 
-// MediaPipe hand landmark indices
-export const INDEX_TIP = 8;
+
+// Complete MediaPipe Landmark indices
+export const WRIST = 0;
+export const THUMB_CMC = 1;
+export const THUMB_MCP = 2;
+export const THUMB_IP = 3;
 export const THUMB_TIP = 4;
+
+export const INDEX_MCP = 5;
+export const INDEX_PIP = 6;
+export const INDEX_DIP = 7;
+export const INDEX_TIP = 8;
+
+export const MIDDLE_MCP = 9;
+export const MIDDLE_PIP = 10;
+export const MIDDLE_DIP = 11;
+export const MIDDLE_TIP = 12;
+
+export const RING_MCP = 13;
+export const RING_PIP = 14;
+export const RING_DIP = 15;
+export const RING_TIP = 16;
+
+export const PINKY_MCP = 17;
+export const PINKY_PIP = 18;
+export const PINKY_DIP = 19;
+export const PINKY_TIP = 20;

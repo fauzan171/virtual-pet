@@ -2,86 +2,61 @@ import {
   FilesetResolver,
   HandLandmarker,
   type HandLandmarkerResult,
+  type NormalizedLandmark,
 } from '@mediapipe/tasks-vision';
 import {
   MODEL_URL,
   WASM_BASE,
+  INDEX_MCP,
+  INDEX_PIP,
+  INDEX_DIP,
   INDEX_TIP,
+  MIDDLE_MCP,
+  MIDDLE_PIP,
+  MIDDLE_DIP,
+  MIDDLE_TIP,
+  RING_MCP,
+  RING_PIP,
+  RING_DIP,
+  RING_TIP,
+  PINKY_MCP,
+  PINKY_PIP,
+  PINKY_DIP,
+  PINKY_TIP,
+  THUMB_MCP,
+  THUMB_IP,
   THUMB_TIP,
+  WRIST,
   ONE_EURO_MIN_CUTOFF,
   ONE_EURO_BETA,
   ONE_EURO_D_CUTOFF,
 } from './constants';
-import { normalizedPinchDistance } from './geometry';
+import {
+  normalizedPinchDistance,
+  isFingerExtended,
+  isThumbExtended,
+} from './geometry';
 import { mapWithCalibration, type CalibrationData } from './calibration';
 import { OneEuroFilter } from './one-euro';
-import type { HandFrame, Point } from './types';
-import type { NormalizedLandmark } from '@mediapipe/tasks-vision';
+import type { HandFrame, Point, GestureType, LandmarkPoint } from './types';
 
-// Landmark indices for finger extension detection (tip vs PIP joint)
-const WRIST = 0;
-const INDEX_PIP = 6;
-const MIDDLE_TIP = 12;
-const MIDDLE_PIP = 10;
-const RING_TIP = 16;
-const RING_PIP = 14;
-const PINKY_TIP = 20;
-const PINKY_PIP = 18;
-const PINKY_MCP = 17;
-const MIDDLE_MCP = 9;
-
-function dist(a: NormalizedLandmark, b: NormalizedLandmark): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-/** A finger is extended when its tip is farther from the wrist than its PIP joint. */
-function extended(lm: NormalizedLandmark[], tip: number, pip: number): boolean {
-  return dist(lm[tip], lm[WRIST]) > dist(lm[pip], lm[WRIST]) * 1.05;
-}
-
-/** Thumb is out when its tip sits well beyond the palm's far edge (pinky MCP).
- * Old check compared tip↔wrist against tip↔index base; it failed on open
- * palms facing the camera: the tip lands near the wrist line, so the thumb
- * read as tucked in, the count capped at 4, and the 5-finger menu never fired. */
-function thumbOut(lm: NormalizedLandmark[]): boolean {
-  return dist(lm[THUMB_TIP], lm[PINKY_MCP]) > dist(lm[WRIST], lm[PINKY_MCP]) * 0.95;
-}
-
-/** Count extended fingers: 4 fingers + thumb. 5 = open palm (menu). */
-function countFingers(lm: NormalizedLandmark[]): number {
-  let n = thumbOut(lm) ? 1 : 0;
-  if (extended(lm, INDEX_TIP, INDEX_PIP)) n++;
-  if (extended(lm, MIDDLE_TIP, MIDDLE_PIP)) n++;
-  if (extended(lm, RING_TIP, RING_PIP)) n++;
-  if (extended(lm, PINKY_TIP, PINKY_PIP)) n++;
-  return n;
-}
-
-/**
- * Two-finger gesture: index + middle extended, ring + pinky curled.
- * Used to open the color palette on the canvas.
- */
-function detectTwoFingers(count: number, lm: NormalizedLandmark[]): boolean {
-  if (count !== 2) return false;
-  // Must be index + middle specifically, not any two
-  return extended(lm, INDEX_TIP, INDEX_PIP) && extended(lm, MIDDLE_TIP, MIDDLE_PIP);
-}
-
-// ponytail: module-level filters assume a single presenter (numHands: 1);
-// move to per-instance state if multi-hand ever lands.
+// Global One-Euro Filter instances for continuous low-latency tracking
 const filterX = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
 const filterY = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
 
-/** Create the MediaPipe Hand Landmarker. Falls back GPU -> CPU silently. */
+// Motion Vector State for 120Hz/144Hz Predictive Extrapolation
+let lastRawX = 0;
+let lastRawY = 0;
+let lastTimestamp = 0;
+let currentVelocity = { vx: 0, vy: 0 };
+
 export async function createHandLandmarker(): Promise<HandLandmarker> {
   const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
   const options = (delegate: 'GPU' | 'CPU') => ({
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
     numHands: 1,
-    minHandDetectionConfidence: 0.5,
-    minHandPresenceConfidence: 0.5,
-    // Looser tracking confidence: keeps the landmark stream alive through
-    // fast sweeps and brief self-occlusion instead of dropping frames.
+    minHandDetectionConfidence: 0.4,
+    minHandPresenceConfidence: 0.4,
     minTrackingConfidence: 0.3,
     runningMode: 'VIDEO' as const,
   });
@@ -95,9 +70,17 @@ export async function createHandLandmarker(): Promise<HandLandmarker> {
 }
 
 /**
- * Pure per-frame extraction. Reads landmark 8 (index tip) and 4 (thumb tip),
- * applies calibrated region mapping, mirror, smoothing, and pinch hysteresis.
+ * Extrapolates cursor coordinate ahead in time based on velocity vector
+ * to match 120Hz/144Hz high-refresh displays with zero visual lag.
  */
+export function getExtrapolatedCursor(baseCursor: Point, leadTimeMs: number = 10): Point {
+  const dt = leadTimeMs / 1000;
+  return {
+    x: baseCursor.x + currentVelocity.vx * dt,
+    y: baseCursor.y + currentVelocity.vy * dt,
+  };
+}
+
 export function extractHandFrame(
   result: HandLandmarkerResult,
   canvasW: number,
@@ -106,10 +89,14 @@ export function extractHandFrame(
   cal: CalibrationData
 ): HandFrame {
   const landmarks = result.landmarks?.[0];
-  if (!landmarks) {
-    // Hand left — reset so re-acquire doesn't interpolate a giant jump
+  const now = performance.now();
+
+  if (!landmarks || landmarks.length < 21) {
     filterX.reset();
     filterY.reset();
+    currentVelocity = { vx: 0, vy: 0 };
+    lastTimestamp = now;
+
     return {
       detected: false,
       cursor: prev?.cursor ?? { x: canvasW / 2, y: canvasH / 2 },
@@ -117,39 +104,133 @@ export function extractHandFrame(
       rawThumb: prev?.rawThumb ?? { x: 0.5, y: 0.5 },
       pinchDist: prev?.pinchDist ?? 1,
       pinching: false,
+      isPointing: false,
       twoFingers: false,
+      threeFingers: false,
+      openPalm: false,
+      fist: false,
+      activeGesture: 'hover',
       fingerCount: 0,
       thumbOut: false,
+      landmarks: undefined,
     };
   }
 
   const rawIndex: Point = { x: landmarks[INDEX_TIP].x, y: landmarks[INDEX_TIP].y };
   const rawThumb: Point = { x: landmarks[THUMB_TIP].x, y: landmarks[THUMB_TIP].y };
-  // Hand-size-normalized so pinch state doesn't flicker when the presenter
-  // moves closer to / farther from the camera mid-stroke.
-  const dist = normalizedPinchDistance(
+
+  const pinchDist = normalizedPinchDistance(
     rawThumb,
     rawIndex,
-    { x: landmarks[WRIST].x, y: landmarks[WRIST].y },
-    { x: landmarks[MIDDLE_MCP].x, y: landmarks[MIDDLE_MCP].y }
+    landmarks[WRIST],
+    landmarks[MIDDLE_MCP]
   );
 
-  // Hysteresis: different thresholds for activation vs release
-  const pinching = prev?.pinching ? dist < cal.pinchOff : dist < cal.pinchOn;
+  const pinching = prev?.pinching ? pinchDist < cal.pinchOff : pinchDist < cal.pinchOn;
 
-  // One-Euro Filter in pixel space: heavy smoothing at rest (no shake),
-  // light smoothing at speed (no lag). Filter after mapping so beta's units
-  // match the drawing space.
-  const target = mapWithCalibration(rawIndex.x, rawIndex.y, canvasW, canvasH, cal);
-  const cursor = {
-    x: filterX.filter(target.x, performance.now()),
-    y: filterY.filter(target.y, performance.now()),
+  // Individual finger 3D extension states
+  const indexExt = isFingerExtended(landmarks, INDEX_MCP, INDEX_PIP, INDEX_DIP, INDEX_TIP, WRIST);
+  const middleExt = isFingerExtended(landmarks, MIDDLE_MCP, MIDDLE_PIP, MIDDLE_DIP, MIDDLE_TIP, WRIST);
+  const ringExt = isFingerExtended(landmarks, RING_MCP, RING_PIP, RING_DIP, RING_TIP, WRIST);
+  const pinkyExt = isFingerExtended(landmarks, PINKY_MCP, PINKY_PIP, PINKY_DIP, PINKY_TIP, WRIST);
+  const thumbExt = isThumbExtended(
+    landmarks,
+    THUMB_TIP,
+    THUMB_MCP,
+    PINKY_MCP,
+    WRIST,
+    THUMB_IP,
+    INDEX_MCP,
+    MIDDLE_MCP
+  );
+
+  let fingerCount = 0;
+  if (thumbExt) fingerCount++;
+  if (indexExt) fingerCount++;
+  if (middleExt) fingerCount++;
+  if (ringExt) fingerCount++;
+  if (pinkyExt) fingerCount++;
+
+  // Gestures Identification
+  const isPointing = indexExt && !middleExt && !ringExt && !pinkyExt;
+  const twoFingers = indexExt && middleExt && !ringExt && !pinkyExt;
+  const threeFingers =
+    (indexExt && middleExt && ringExt && !pinkyExt) ||
+    (thumbExt && indexExt && middleExt && !ringExt && !pinkyExt);
+  const openPalm = fingerCount >= 4 || (indexExt && middleExt && ringExt && pinkyExt);
+  const allFourCurled = !indexExt && !middleExt && !ringExt && !pinkyExt;
+  const fist = allFourCurled && !pinching && !isPointing;
+
+  let activeGesture: GestureType = 'hover';
+  if (pinching) {
+    activeGesture = 'pinch';
+  } else if (isPointing) {
+    activeGesture = 'point';
+  } else if (twoFingers) {
+    activeGesture = 'peace';
+  } else if (threeFingers) {
+    activeGesture = 'three';
+  } else if (openPalm) {
+    activeGesture = 'open';
+  } else if (fist) {
+    activeGesture = 'fist';
+  }
+
+  // Anchor target coordinate selection
+  let targetRawX = rawIndex.x;
+  let targetRawY = rawIndex.y;
+
+  if (pinching) {
+    // Midpoint between Index and Thumb
+    targetRawX = (rawIndex.x * 0.6) + (rawThumb.x * 0.4);
+    targetRawY = (rawIndex.y * 0.6) + (rawThumb.y * 0.4);
+  } else if (fist) {
+    // Rest on index knuckle (MCP) for stability
+    targetRawX = landmarks[INDEX_MCP].x;
+    targetRawY = landmarks[INDEX_MCP].y;
+  }
+
+  // Map to Canvas bounds via calibration
+  const target = mapWithCalibration(targetRawX, targetRawY, canvasW, canvasH, cal);
+
+  // Filter raw target through One-Euro Filter
+  const filteredX = filterX.filter(target.x, now);
+  const filteredY = filterY.filter(target.y, now);
+
+  // Calculate Velocity Vector for Predictive Motion
+  const dt = (now - lastTimestamp) / 1000;
+  if (dt > 0 && dt < 0.1) {
+    currentVelocity.vx = (filteredX - lastRawX) / dt;
+    currentVelocity.vy = (filteredY - lastRawY) / dt;
+  }
+  lastRawX = filteredX;
+  lastRawY = filteredY;
+  lastTimestamp = now;
+
+  const cursor: Point = { x: filteredX, y: filteredY };
+
+  // Map full 21 3D landmarks for direct canvas skeleton rendering
+  const landmarkPoints: LandmarkPoint[] = landmarks.map((l) => ({
+    x: l.x,
+    y: l.y,
+    z: l.z ?? 0,
+  }));
+
+  return {
+    detected: true,
+    cursor,
+    rawIndex,
+    rawThumb,
+    pinchDist,
+    pinching,
+    isPointing,
+    twoFingers,
+    threeFingers,
+    openPalm,
+    fist,
+    activeGesture,
+    fingerCount,
+    thumbOut: thumbExt,
+    landmarks: landmarkPoints,
   };
-
-  const out = thumbOut(landmarks);
-  const fingerCount = countFingers(landmarks);
-  // twoFingers means "2 raised fingers" — exclude the thumb from the count
-  const twoFingers = detectTwoFingers(fingerCount - (out ? 1 : 0), landmarks);
-
-  return { detected: true, cursor, rawIndex, rawThumb, pinchDist: dist, pinching, twoFingers, fingerCount, thumbOut: out };
 }

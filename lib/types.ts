@@ -13,9 +13,29 @@ export interface Point {
   y: number;
 }
 
-export type ShapeId = 'circle' | 'square' | 'triangle' | 'line' | 'curve';
+export type ShapeId =
+  | 'circle'
+  | 'square'
+  | 'rectangle'
+  | 'triangle'
+  | 'star'
+  | 'heart'
+  | 'line'
+  | 'arrow'
+  | 'curve';
 
 export type ToolId = 'pen' | 'eraser';
+
+export type DrawMode = 'smart' | 'point' | 'pinch';
+
+export type GestureType =
+  | 'point'
+  | 'pinch'
+  | 'peace'
+  | 'three'
+  | 'open'
+  | 'fist'
+  | 'hover';
 
 export interface Stroke {
   points: Point[];
@@ -25,6 +45,16 @@ export interface Stroke {
   shape?: ShapeId;
   /** Eraser strokes are rendered white (canvas bg) instead of ink. */
   tool?: ToolId;
+  /** Optional metadata about auto-recognized shape */
+  recognizedAs?: ShapeId;
+  /** Optional neon glow styling */
+  glow?: boolean;
+}
+
+export interface LandmarkPoint {
+  x: number;
+  y: number;
+  z?: number;
 }
 
 export interface HandFrame {
@@ -37,12 +67,32 @@ export interface HandFrame {
   pinchDist: number;
   // After hysteresis
   pinching: boolean;
+  // Index finger extended while others curled (Natural Air Pen mode)
+  isPointing: boolean;
   // Gesture: only index + middle extended (two fingers up)
   twoFingers: boolean;
+  // 3 fingers extended
+  threeFingers: boolean;
+  // Open hand (4-5 fingers extended)
+  openPalm: boolean;
+  // Fist (all curled)
+  fist: boolean;
+  // Human readable gesture descriptor
+  activeGesture: GestureType;
   // How many fingers are extended — INCLUDING the thumb when it is out.
-  // During a pinch the thumb tucks, so raised fingers = fingerCount - thumbOut.
   fingerCount: number;
   thumbOut: boolean;
+  // Complete 21 hand landmarks for skeleton preview
+  landmarks?: LandmarkPoint[];
+}
+
+export interface DetectedShapeResult {
+  type: ShapeId;
+  confidence: number;
+  label: string;
+  points: Point[];
 }
 
 export type ButtonId = 'UNDO' | 'CLEAR' | 'GENERATE' | 'CLOSE';
+
+

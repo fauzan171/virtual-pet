@@ -3,11 +3,12 @@
 html,
 body {
   height: 100%;
-  background: #050510;
+  background: radial-gradient(circle at 50% 20%, #0d0d2b 0%, #050510 70%, #020208 100%);
   color: #fff;
   font-family: system-ui, -apple-system, sans-serif;
   overflow: hidden;
   cursor: none; /* hand cursor replaces mouse pointer on stage */
+  user-select: none;
 }
 
 /* Mouse cursor still visible on interactive elements for operator fallback */
@@ -15,3 +16,13 @@ button,
 a {
   cursor: pointer;
 }
+
+/* Custom glowing and glassmorphism helpers */
+.neon-glow {
+  box-shadow: 0 0 20px rgba(0, 240, 255, 0.4), inset 0 0 10px rgba(0, 240, 255, 0.2);
+}
+
+.text-glow {
+  text-shadow: 0 0 12px rgba(0, 240, 255, 0.6);
+}
+
