@@ -48,7 +48,7 @@ export async function refineSpokenPrompt(
 
   const userContent = sketchPng
     ? [
-        { type: 'image_url', image_url: { url: `data:image/png;base64,${sketchPng.toString('base64')}` }, max_pixels: 1_048_576 },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${sketchPng.toString('base64')}` }, max_pixels: 262_144 },
         { type: 'text', text: `ASR TRANSCRIPT:\n${input}` },
       ]
     : input;

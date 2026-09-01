@@ -9,7 +9,7 @@
 const TARGET_SAMPLE_RATE = 16_000;
 const MAX_RECORDING_MS = 15_000;
 const NO_SPEECH_TIMEOUT_MS = 7_000;
-const SILENCE_AFTER_SPEECH_MS = 1_200;
+const SILENCE_AFTER_SPEECH_MS = 600;
 const SPEECH_RMS_THRESHOLD = 0.018;
 
 export type VoiceCaptureStatus = 'listening' | 'processing';

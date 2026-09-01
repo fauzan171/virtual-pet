@@ -106,8 +106,25 @@ export function renderLiveStroke(
   else drawStrokeSegment(ctx, stroke, 1);
 }
 
-/** Export canvas as PNG blob with white background baked in. */
-export function exportPng(canvas: HTMLCanvasElement): Promise<Blob> {
+/** Export canvas as PNG blob with white background baked in.
+ * maxDim caps the long edge in device pixels — providers ingest a data URL,
+ * so a full-DPR export uploads megabytes for no visual gain. */
+export function exportPng(canvas: HTMLCanvasElement, maxDim = 1024): Promise<Blob> {
+  const scale = Math.min(1, maxDim / Math.max(canvas.width, canvas.height));
+  if (scale >= 1) {
+    return canvasToPng(canvas);
+  }
+  const scaled = document.createElement('canvas');
+  scaled.width = Math.round(canvas.width * scale);
+  scaled.height = Math.round(canvas.height * scale);
+  const ctx = scaled.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, scaled.width, scaled.height);
+  ctx.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+  return canvasToPng(scaled);
+}
+
+function canvasToPng(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => (blob ? resolve(blob) : reject(new Error('toBlob failed'))),
