@@ -2,20 +2,20 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, useMotionValue } from 'framer-motion';
-import { createHandLandmarker, extractHandFrame } from '@/lib/hand-tracking';
-import { drawStrokeSegment, redrawAll } from '@/lib/strokes';
+import { createHandLandmarker, extractHandFrame, resetHandSmoothing } from '@/lib/hand-tracking';
 import {
   CAMERA,
   BUTTON_DEBOUNCE_MS,
   CLEAR_CONFIRM_TIMEOUT_MS,
-  GESTURE_HOLD_FRAMES,
-  GESTURE_COOLDOWN_MS,
   INK,
   COLORS,
   STROKE_WIDTH,
-  DWELL_CLICK_MS,
+  MIN_BRUSH_SIZE,
+  MAX_BRUSH_SIZE,
   HAND_LOST_GRACE_FRAMES,
+  MAX_REACQUIRE_JUMP_PX,
   BUTTON_HIT_PAD,
+  DWELL_SELECT_MS,
 } from '@/lib/constants';
 import type { AppState, ButtonId, HandFrame, Stroke, ShapeId, ToolId } from '@/lib/types';
 import DrawingCanvas, { type DrawingCanvasHandle } from './DrawingCanvas';
@@ -29,7 +29,7 @@ import ColorPicker from './ColorPicker';
 import ShapePicker, { SHAPES } from './ShapePicker';
 import { STYLES, type StyleKey } from '@/lib/prompt';
 import { sound } from '@/lib/sound';
-import { VoiceController, voiceSupported, type VoiceCommand } from '@/lib/voice';
+import { captureVoicePrompt, type VoiceCaptureStatus } from '@/lib/voice-prompt-recorder';
 import {
   effectiveCalibration,
   saveCalibration,
@@ -38,14 +38,73 @@ import {
 } from '@/lib/calibration';
 import { PINCH_ON, PINCH_OFF, PINCH_RELEASE_GRACE_FRAMES } from '@/lib/constants';
 import { applyPenDeadzone } from '@/lib/geometry';
+import { commandFingerCount, GestureHoldDetector } from '@/lib/gestures';
 import CalibrationOverlay, { type CalibrationPhase } from './CalibrationOverlay';
+import GestureGuide from './GestureGuide';
+import { shouldProcessVideoFrame } from '@/lib/frame-loop';
+import { shouldActivateControl, updateDwell, initialDwell, type DwellState } from '@/lib/control-selection';
+import {
+  isAllowedGeneratedImageUrl,
+  scaleStrokeInPlace,
+  shouldSplitReacquiredStroke,
+} from '@/lib/stage-reliability';
+
+type LatencyStats = {
+  avgDetectMs: number;
+  maxDetectMs: number;
+  avgLoopMs: number;
+  maxLoopMs: number;
+  avgFrameIntervalMs: number;
+  maxFrameIntervalMs: number;
+};
+
+const emptyLatencyStats: LatencyStats = {
+  avgDetectMs: 0,
+  maxDetectMs: 0,
+  avgLoopMs: 0,
+  maxLoopMs: 0,
+  avgFrameIntervalMs: 0,
+  maxFrameIntervalMs: 0,
+};
+
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms);
+    signal.addEventListener('abort', () => {
+      window.clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }, { once: true });
+  });
+}
+
+function preloadImage(src: string, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const cleanup = () => {
+      image.onload = null;
+      image.onerror = null;
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onAbort = () => {
+      cleanup();
+      image.src = '';
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    image.onload = () => { cleanup(); resolve(); };
+    image.onerror = () => { cleanup(); reject(new Error('Generated image failed to load')); };
+    signal.addEventListener('abort', onAbort, { once: true });
+    image.src = src;
+  });
+}
 
 export default function AirCanvas() {
   const [appState, setAppState] = useState<AppState>('INITIALIZING');
   const [banner, setBanner] = useState<string | null>(null);
   const [debugOn, setDebugOn] = useState(false);
-  // Preview on by default so presenter can see themselves and orient the cursor; toggle with C
+  // Presenter camera is visible by default; toggle with C when measuring the
+  // raw CV path without the extra composited video layer.
   const [cameraPreviewOn, setCameraPreviewOn] = useState(true);
+  const [bootstrapAttempt, setBootstrapAttempt] = useState(0);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [hoveredButton, setHoveredButton] = useState<ButtonId | null>(null);
   const [clearConfirming, setClearConfirming] = useState(false);
@@ -54,7 +113,9 @@ export default function AirCanvas() {
   const undoConfirmingRef = useRef(false);
   const [strokeCount, setStrokeCount] = useState(0);
   const [fps, setFps] = useState(0);
+  const [latencyStats, setLatencyStats] = useState<LatencyStats>(emptyLatencyStats);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [resultEngine, setResultEngine] = useState<string | null>(null);
   const [sketchUrl, setSketchUrl] = useState<string | null>(null);
   // Calibration
   const [calMode, setCalMode] = useState<CalibrationPhase | null>(null);
@@ -64,17 +125,24 @@ export default function AirCanvas() {
   const calSamplesRef = useRef({
     minX: 1, maxX: 0, minY: 1, maxY: 0,
     startedAt: 0,
+    rangeXs: [] as number[],
+    rangeYs: [] as number[],
     pinchDists: [] as number[],
-    pinchCycles: 0,
-    wasPinching: false,
   });
 
   const [selectedStyle, setSelectedStyle] = useState<StyleKey | null>(null);
   const selectedStyleRef = useRef<StyleKey | null>(null);
   const [hoveredStyle, setHoveredStyle] = useState<StyleKey | null>(null);
+  const [voicePrompt, setVoicePrompt] = useState('');
+  const voicePromptRef = useRef('');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
+  const [voiceStatus, setVoiceStatus] = useState<VoiceCaptureStatus | 'idle' | 'ready' | 'error'>('idle');
+  const voiceCaptureAbortRef = useRef<AbortController | null>(null);
   // Ink color — selected via the right-side palette; tints cursor dot + strokes
   const [inkColor, setInkColor] = useState<string>(INK);
   const inkColorRef = useRef<string>(INK);
+  const [brushSize, setBrushSize] = useState(STROKE_WIDTH);
+  const brushSizeRef = useRef(STROKE_WIDTH);
   const [hoveredColor, setHoveredColor] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   // Shape tool: picker overlay + currently armed shape (null = freehand pen)
@@ -112,17 +180,33 @@ export default function AirCanvas() {
     setPaletteState(!paletteOpenRef.current);
   }, [setPaletteState]);
   const [isPinching, setIsPinching] = useState(false);
+  const isPinchingRef = useRef(false);
   const [debugFrame, setDebugFrame] = useState<HandFrame | null>(null);
+  const hoveredButtonRef = useRef<ButtonId | null>(null);
+  const hoveredStyleRef = useRef<StyleKey | null>(null);
+  const hoveredColorRef = useRef<string | null>(null);
+  const hoveredShapeRef = useRef<ShapeId | null>(null);
+  const dwellProgressRef = useRef(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const drawingRef = useRef<DrawingCanvasHandle>(null);
   const landmarkerRef = useRef<Awaited<ReturnType<typeof createHandLandmarker>> | null>(null);
   const rafRef = useRef(0);
+  const lastVideoTimeRef = useRef(-1);
+  const latencyRef = useRef({
+    count: 0,
+    detectTotal: 0,
+    detectMax: 0,
+    loopTotal: 0,
+    loopMax: 0,
+    frameIntervalTotal: 0,
+    frameIntervalMax: 0,
+    lastFrameAt: 0,
+  });
   const prevFrameRef = useRef<HandFrame | null>(null);
   const stateRef = useRef<AppState>('INITIALIZING');
   const strokesRef = useRef<Stroke[]>([]);
   const currentStrokeRef = useRef<Stroke | null>(null);
-  const lastDrawnIndexRef = useRef(0);
   const buttonRectsRef = useRef<Record<ButtonId, DOMRect | null>>({
     UNDO: null,
     CLEAR: null,
@@ -130,27 +214,38 @@ export default function AirCanvas() {
     CLOSE: null,
   });
   const lastClickRef = useRef<Record<ButtonId, number>>({ UNDO: 0, CLEAR: 0, GENERATE: 0, CLOSE: 0 });
-  // Dwell-to-click state: which control the cursor is resting on, and since when
-  const dwellRef = useRef<{ id: string | null; since: number }>({ id: null, since: 0 });
   // Frames of lost hand tracking tolerated before committing the open stroke
   const handLostFramesRef = useRef(0);
+  // Click anchor: cursor position while the pinch is comfortably open. The
+  // index tip travels 100px+ toward the thumb as a pinch closes, so clicking
+  // the live position misses the control the user was actually aiming at.
+  const clickAnchorRef = useRef({ x: 0, y: 0 });
+  // Dwell-to-select state — aiming at a control and holding activates it.
+  const dwellRef = useRef<DwellState>(initialDwell);
+  // 0..1 progress of the current dwell, for the radial progress ring.
+  const [dwellProgress, setDwellProgress] = useState(0);
   // Frames the pinch has stayed released while a stroke is open
   const pinchReleasedFramesRef = useRef(0);
   const clearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const styleRectsRef = useRef<Partial<Record<StyleKey, DOMRect | null>>>({});
   const lastStyleClickRef = useRef(0);
+  const brushSliderRectRef = useRef<DOMRect | null>(null);
   const colorRectsRef = useRef<Record<string, DOMRect | null>>({});
   const lastColorClickRef = useRef(0);
   // Two-finger gesture toggles the color palette
   const paletteOpenRef = useRef(false);
   // Multi-finger gestures (3 = shape picker, 4 = eraser, 5 = undo)
-  const gestureFramesRef = useRef(0);
-  const gestureCooldownRef = useRef(0);
-  const lastGestureCountRef = useRef(0);
+  const gestureHoldRef = useRef(new GestureHoldDetector());
   const shapeRectsRef = useRef<Partial<Record<ShapeId, DOMRect | null>>>({});
   const lastShapeClickRef = useRef(0);
   const eraserWidthRef = useRef(STROKE_WIDTH * 6);
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const generationIdRef = useRef(0);
+  const cameraPreviewRectRef = useRef<DOMRect | null>(null);
+  const registerCameraPreviewRect = useCallback((rect: DOMRect | null) => {
+    cameraPreviewRectRef.current = rect;
+  }, []);
 
   // MotionValues — cursor position updates without React re-render
   const cursorX = useMotionValue(0);
@@ -161,7 +256,48 @@ export default function AirCanvas() {
     setAppState(s);
   }, []);
 
+  // Tool setters keep their paired refs in sync — used from both the rAF
+  // loop (via refs) and actions like triggerReset.
+  const setShapeState = useCallback((shape: ShapeId | null) => {
+    activeShapeRef.current = shape;
+    setActiveShape(shape);
+  }, []);
+
+  const setShapePickerState = useCallback((open: boolean) => {
+    shapePickerOpenRef.current = open;
+    setShapePickerOpen(open);
+  }, []);
+
+  const setToolState = useCallback((t: ToolId) => {
+    toolRef.current = t;
+    setTool(t);
+  }, []);
+
   // ─── Actions ────────────────────────────────────────────────────────────────
+
+  const commitCurrentStroke = useCallback(() => {
+    const stroke = currentStrokeRef.current;
+    if (!stroke) return false;
+    currentStrokeRef.current = null;
+    pinchReleasedFramesRef.current = 0;
+
+    // A single point has no visible output and must not enable generation.
+    if (stroke.points.length < 2) {
+      drawingRef.current?.redraw(strokesRef.current);
+      return false;
+    }
+
+    strokesRef.current.push(stroke);
+    drawingRef.current?.redraw(strokesRef.current);
+    setStrokeCount(strokesRef.current.length);
+    if (stroke.shape) setShapeState(null); // shape selection is one-shot
+    return true;
+  }, [setShapeState]);
+
+  const handleCanvasResize = useCallback((scaleX: number, scaleY: number) => {
+    strokesRef.current.forEach((stroke) => scaleStrokeInPlace(stroke, scaleX, scaleY));
+    if (currentStrokeRef.current) scaleStrokeInPlace(currentStrokeRef.current, scaleX, scaleY);
+  }, []);
 
   const executeUndo = useCallback(() => {
     strokesRef.current.pop();
@@ -218,67 +354,86 @@ export default function AirCanvas() {
     }, CLEAR_CONFIRM_TIMEOUT_MS);
   }, [executeClear]);
 
-  const triggerGenerate = useCallback(async (subject?: string) => {
+  const triggerGenerate = useCallback(async (promptOverride?: string) => {
     if (stateRef.current === 'GENERATING' || stateRef.current === 'CAPTURE') return;
+    const spokenPrompt = promptOverride?.trim() || voicePromptRef.current.trim();
+    if (!spokenPrompt) {
+      setBanner('PRESS M AND SPEAK YOUR IMAGE PROMPT FIRST');
+      setTimeout(() => setBanner(null), 3000);
+      return;
+    }
+    commitCurrentStroke();
     if (strokesRef.current.length === 0) return;
+    generationAbortRef.current?.abort();
+    const controller = new AbortController();
+    const generationId = ++generationIdRef.current;
+    generationAbortRef.current = controller;
     setState('CAPTURE');
     setBanner('SKETCH CAPTURED ✓');
     sound.captured();
     try {
       const blob = await drawingRef.current!.exportPng();
-      setSketchUrl(URL.createObjectURL(blob));
+      if (controller.signal.aborted || generationId !== generationIdRef.current) return;
+      const nextSketchUrl = URL.createObjectURL(blob);
+      setSketchUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return nextSketchUrl;
+      });
       setState('GENERATING');
       sound.generateStart();
       const form = new FormData();
       form.append('image', blob, 'sketch.png');
       if (selectedStyleRef.current) form.append('style', selectedStyleRef.current);
-      // Subject spoken by the presenter ("generate a dragon") — feeds the
-      // fallback engine when no img2img provider key is configured.
-      if (subject) form.append('subject', subject);
-      const res = await fetch('/api/generate', { method: 'POST', body: form });
+      form.append('prompt', spokenPrompt);
+      const res = await fetch('/api/generate', { method: 'POST', body: form, signal: controller.signal });
       if (!res.ok) throw new Error('API error');
       const data = await res.json();
+      if (!isAllowedGeneratedImageUrl(data.imageUrl)) {
+        throw new Error('Invalid generated image response');
+      }
+      await preloadImage(data.imageUrl, controller.signal);
+      if (generationId !== generationIdRef.current) return;
       setResultUrl(data.imageUrl);
+      setResultEngine(typeof data.engine === 'string' ? data.engine : 'unknown');
       // Hold on the reveal ~1.4s after the asset arrives (PRD §26)
-      await new Promise((r) => setTimeout(r, 1400));
+      await abortableDelay(1400, controller.signal);
+      if (generationId !== generationIdRef.current) return;
       sound.reveal();
       setState('RESULT');
       setBanner(null);
-    } catch {
+    } catch (error) {
+      if (controller.signal.aborted || generationId !== generationIdRef.current) return;
       // Sketch preserved on failure
       setState('DRAWING');
-      setBanner('GENERATION FAILED — SKETCH PRESERVED');
+      setBanner(error instanceof Error && error.name === 'AbortError'
+        ? null
+        : 'GENERATION FAILED — CHECK AI STATUS; SKETCH PRESERVED');
       setTimeout(() => setBanner(null), 3000);
+    } finally {
+      if (generationAbortRef.current === controller) generationAbortRef.current = null;
     }
-  }, [setState]);
-
-  // Tool setters keep their paired refs in sync — used from both the rAF
-  // loop (via refs) and actions like triggerReset.
-  const setShapeState = useCallback((shape: ShapeId | null) => {
-    activeShapeRef.current = shape;
-    setActiveShape(shape);
-  }, []);
-
-  const setShapePickerState = useCallback((open: boolean) => {
-    shapePickerOpenRef.current = open;
-    setShapePickerOpen(open);
-  }, []);
-
-  const setToolState = useCallback((t: ToolId) => {
-    toolRef.current = t;
-    setTool(t);
-  }, []);
+  }, [commitCurrentStroke, setState]);
 
   const triggerReset = useCallback(() => {
+    generationIdRef.current++;
+    generationAbortRef.current?.abort();
+    generationAbortRef.current = null;
+    voiceCaptureAbortRef.current?.abort();
+    voiceCaptureAbortRef.current = null;
     strokesRef.current = [];
     currentStrokeRef.current = null;
     drawingRef.current?.clear();
     setStrokeCount(0);
     setResultUrl(null);
+    setResultEngine(null);
     if (sketchUrl) URL.revokeObjectURL(sketchUrl);
     setSketchUrl(null);
     setSelectedStyle(null);
     selectedStyleRef.current = null;
+    setVoicePrompt('');
+    voicePromptRef.current = '';
+    setVoiceTranscript('');
+    setVoiceStatus('idle');
     setInkColor(INK);
     inkColorRef.current = INK;
     // Tool state back to defaults: pen, freehand, overlays closed.
@@ -304,9 +459,9 @@ export default function AirCanvas() {
     calSamplesRef.current = {
       minX: 1, maxX: 0, minY: 1, maxY: 0,
       startedAt: Date.now(),
+      rangeXs: [],
+      rangeYs: [],
       pinchDists: [],
-      pinchCycles: 0,
-      wasPinching: false,
     };
     calModeRef.current = 'RANGE';
     setCalMode('RANGE');
@@ -315,12 +470,20 @@ export default function AirCanvas() {
 
   const finishCalibration = useCallback(() => {
     const s = calSamplesRef.current;
-    if (s.maxX > s.minX && s.maxY > s.minY) {
+    const percentile = (values: number[], fraction: number) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      return sorted[Math.floor((sorted.length - 1) * fraction)];
+    };
+    const minX = percentile(s.rangeXs, 0.05) ?? s.minX;
+    const maxX = percentile(s.rangeXs, 0.95) ?? s.maxX;
+    const minY = percentile(s.rangeYs, 0.05) ?? s.minY;
+    const maxY = percentile(s.rangeYs, 0.95) ?? s.maxY;
+    if (maxX - minX >= 0.1 && maxY - minY >= 0.1) {
       const pinch = s.pinchDists.length >= 4
         ? computePinchThresholds(s.pinchDists)
         : { on: PINCH_ON, off: PINCH_OFF };
       const data: CalibrationData = {
-        minX: s.minX, maxX: s.maxX, minY: s.minY, maxY: s.maxY,
+        minX, maxX, minY, maxY,
         // Hysteresis gap must be proportional now that thresholds are
         // hand-size ratios, not raw distances
         pinchOn: pinch.on, pinchOff: Math.max(pinch.off, pinch.on * 1.3),
@@ -371,6 +534,13 @@ export default function AirCanvas() {
     return null;
   }, []);
 
+  const isOverBrushSlider = useCallback((x: number, y: number): boolean => {
+    const rect = brushSliderRectRef.current;
+    return Boolean(
+      rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+    );
+  }, []);
+
   const hitTestColor = useCallback((x: number, y: number): string | null => {
     for (const color of COLORS) {
       const rect = colorRectsRef.current[color];
@@ -406,6 +576,7 @@ export default function AirCanvas() {
   const handlePinchClick = useCallback(
     (x: number, y: number) => {
       const now = Date.now();
+      if (isOverBrushSlider(x, y)) return;
       const shape = hitTestShape(x, y);
       if (shape) {
         if (now - lastShapeClickRef.current < BUTTON_DEBOUNCE_MS) return;
@@ -445,20 +616,70 @@ export default function AirCanvas() {
       else if (id === 'GENERATE') triggerGenerate();
       else if (id === 'CLOSE') toggleMenu();
     },
-    [hitTest, hitTestStyle, hitTestColor, hitTestShape, triggerUndo, triggerClear, triggerGenerate, toggleMenu, setPaletteState, setShapeState, setShapePickerState, setToolState]
+    [hitTest, hitTestStyle, isOverBrushSlider, hitTestColor, hitTestShape, triggerUndo, triggerClear, triggerGenerate, toggleMenu, setPaletteState, setShapeState, setShapePickerState, setToolState]
   );
 
-  // ─── Voice command state (declared before keyboard effect uses setVoiceOn) ──
+  // ─── Voice prompt: local capture → Qwen Audio → Qwen prompt guard ──────────
 
-  const [voiceOn, setVoiceOn] = useState(false);
-  const [voiceListening, setVoiceListening] = useState(false);
-  // useState initializer = one stable controller instance, no ref mutation
-  const [voiceCtrl] = useState(() => new VoiceController());
-  // Latest actions via ref so the voice handler never goes stale
-  const actionsRef = useRef({ triggerGenerate, triggerUndo, triggerClear, triggerReset });
-  useEffect(() => {
-    actionsRef.current = { triggerGenerate, triggerUndo, triggerClear, triggerReset };
-  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset]);
+  const captureSpokenPrompt = useCallback(async () => {
+    if (voiceCaptureAbortRef.current) {
+      voiceCaptureAbortRef.current.abort();
+      voiceCaptureAbortRef.current = null;
+      setVoiceStatus(voicePromptRef.current ? 'ready' : 'idle');
+      setBanner(null);
+      return;
+    }
+    const controller = new AbortController();
+    voiceCaptureAbortRef.current = controller;
+    voicePromptRef.current = '';
+    setVoicePrompt('');
+    setVoiceTranscript('');
+    setVoiceStatus('listening');
+    setBanner('SPEAK YOUR IMAGE PROMPT…');
+    try {
+      const audio = await captureVoicePrompt({
+        signal: controller.signal,
+        onStatus: setVoiceStatus,
+      });
+      const form = new FormData();
+      form.append('audio', audio, 'voice-prompt.wav');
+      if (strokesRef.current.length > 0 && drawingRef.current) {
+        const sketch = await drawingRef.current.exportPng();
+        form.append('sketch', sketch, 'sketch-context.png');
+      }
+      const response = await fetch('/api/transcribe', {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error('Voice prompt API error');
+      const data = await response.json() as { prompt?: unknown; transcript?: unknown };
+      if (typeof data.prompt !== 'string' || data.prompt.trim().length < 3) {
+        throw new Error('Voice prompt was empty');
+      }
+      const prompt = data.prompt.trim();
+      const transcript = typeof data.transcript === 'string' ? data.transcript.trim() : '';
+      voicePromptRef.current = prompt;
+      setVoicePrompt(prompt);
+      setVoiceTranscript(transcript);
+      setVoiceStatus('ready');
+      setBanner(`PROMPT READY: ${prompt.toUpperCase()}`);
+      setTimeout(() => setBanner(null), 4000);
+      sound.click();
+    } catch {
+      if (controller.signal.aborted) return;
+      setVoiceStatus('error');
+      setBanner('VOICE PROMPT FAILED — PRESS M TO TRY AGAIN');
+      setTimeout(() => setBanner(null), 3500);
+    } finally {
+      if (voiceCaptureAbortRef.current === controller) voiceCaptureAbortRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => () => {
+    generationIdRef.current++;
+    generationAbortRef.current?.abort();
+  }, []);
 
   // ─── Keyboard failsafes ─────────────────────────────────────────────────────
 
@@ -468,13 +689,19 @@ export default function AirCanvas() {
         case 'g': triggerGenerate(); break;
         case 'z': triggerUndo(true); break;
         case 'x': triggerClear(true); break;
-        case 'r': triggerReset(); break;
+        case 'r':
+          if (stateRef.current === 'INITIALIZING' || stateRef.current === 'CAMERA_PERMISSION') {
+            setBootstrapAttempt((value) => value + 1);
+          } else {
+            triggerReset();
+          }
+          break;
         case 'c': setCameraPreviewOn(v => !v); break;
         case 'd': setDebugOn(v => !v); break;
         case 'f': toggleFullscreen(); break;
         case 's': sound.toggle(); break;
         case 'v': togglePalette(); break;
-        case 'm': setVoiceOn(v => !v); break;
+        case 'm': void captureSpokenPrompt(); break;
         case 'b':
           if (calModeRef.current) cancelCalibration();
           else if (stateRef.current === 'READY' || stateRef.current === 'DRAWING') startCalibration();
@@ -483,37 +710,7 @@ export default function AirCanvas() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen, startCalibration, cancelCalibration, togglePalette]);
-
-  // ─── Voice commands ─────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const ctrl = voiceCtrl;
-    if (voiceOn && voiceSupported()) {
-      ctrl.start({
-        onCommand: (cmd: VoiceCommand) => {
-          const a = actionsRef.current;
-          sound.click();
-          switch (cmd.action) {
-            case 'generate':
-              a.triggerGenerate(cmd.subject);
-              setBanner(cmd.subject ? `GENERATING "${cmd.subject.toUpperCase()}"` : 'VOICE COMMAND ✓');
-              break;
-            case 'undo': a.triggerUndo(true); break;
-            case 'clear': a.triggerClear(); break;
-            case 'confirm': a.triggerClear(); break;
-            case 'reset': a.triggerReset(); break;
-          }
-        },
-        onStatus: setVoiceListening,
-        // Read fresh each result so "confirm" only works while CLEAR is armed
-        isClearConfirming: () => clearConfirmingRef.current,
-      });
-    } else {
-      ctrl.stop();
-    }
-    return () => ctrl.stop();
-  }, [voiceOn, voiceCtrl]);
+  }, [triggerGenerate, triggerUndo, triggerClear, triggerReset, toggleFullscreen, startCalibration, cancelCalibration, togglePalette, captureSpokenPrompt]);
 
   // ─── Main loop ─────────────────────────────────────────────────────────────
 
@@ -524,7 +721,21 @@ export default function AirCanvas() {
 
     async function init() {
       setState('INITIALIZING');
-      const landmarker = await createHandLandmarker();
+      setBanner(null);
+      setCameraStream(null);
+      prevFrameRef.current = null;
+      lastVideoTimeRef.current = -1;
+      handLostFramesRef.current = 0;
+      let landmarker: Awaited<ReturnType<typeof createHandLandmarker>>;
+      try {
+        landmarker = await createHandLandmarker();
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Hand tracking initialization failed:', error);
+          setBanner('HAND TRACKING FAILED — CHECK NETWORK; PRESS R TO RETRY');
+        }
+        return;
+      }
       if (cancelled) { landmarker.close(); return; }
       landmarkerRef.current = landmarker;
 
@@ -538,11 +749,12 @@ export default function AirCanvas() {
         setCameraStream(stream);
         await videoRef.current!.play();
       } catch {
-        // Stay in CAMERA_PERMISSION, banner already shows the message
+        if (!cancelled) setBanner('CAMERA UNAVAILABLE — CHECK PERMISSION; PRESS R TO RETRY');
         return;
       }
 
       setState('READY');
+      setBanner(null);
       rafRef.current = requestAnimationFrame(loop);
     }
 
@@ -557,9 +769,31 @@ export default function AirCanvas() {
         return;
       }
 
+      // rAF commonly runs at 60Hz while webcams deliver 30 FPS. Never run the
+      // expensive MediaPipe graph twice for the same decoded video frame.
+      if (!shouldProcessVideoFrame(lastVideoTimeRef.current, video.currentTime)) {
+        rafRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      lastVideoTimeRef.current = video.currentTime;
+
+      const frameStartedAt = performance.now();
+      const latency = latencyRef.current;
+      if (latency.lastFrameAt > 0) {
+        const frameIntervalMs = frameStartedAt - latency.lastFrameAt;
+        latency.frameIntervalTotal += frameIntervalMs;
+        latency.frameIntervalMax = Math.max(latency.frameIntervalMax, frameIntervalMs);
+      }
+      latency.lastFrameAt = frameStartedAt;
+
       const [cw, ch] = drawing.size();
       const canvasRect = drawing.rect();
-      const result = landmarker.detectForVideo(video, performance.now());
+      const detectStartedAt = performance.now();
+      const result = landmarker.detectForVideo(video, detectStartedAt);
+      const detectMs = performance.now() - detectStartedAt;
+      latency.count++;
+      latency.detectTotal += detectMs;
+      latency.detectMax = Math.max(latency.detectMax, detectMs);
       const frame = extractHandFrame(result, cw, ch, prevFrameRef.current, calRef.current);
       const prev = prevFrameRef.current;
       prevFrameRef.current = frame;
@@ -577,81 +811,67 @@ export default function AirCanvas() {
           s.maxX = Math.max(s.maxX, frame.rawIndex.x);
           s.minY = Math.min(s.minY, frame.rawIndex.y);
           s.maxY = Math.max(s.maxY, frame.rawIndex.y);
+          s.rangeXs.push(frame.rawIndex.x);
+          s.rangeYs.push(frame.rawIndex.y);
           const elapsed = Date.now() - s.startedAt;
           setCalProgress(Math.min(elapsed / 8000, 1));
           if (elapsed >= 8000) {
             calModeRef.current = 'PINCH';
+            s.startedAt = Date.now();
             setCalMode('PINCH');
             setCalProgress(0);
           }
         } else {
           s.pinchDists.push(frame.pinchDist);
-          if (frame.pinching && !s.wasPinching) s.pinchCycles++;
-          s.wasPinching = frame.pinching;
-          setCalProgress(Math.min(s.pinchCycles / 5, 1));
-          if (s.pinchCycles >= 5) finishCalibration();
+          const elapsed = Date.now() - s.startedAt;
+          setCalProgress(Math.min(elapsed / 6000, 1));
+          if (elapsed >= 6000) finishCalibration();
         }
       }
 
       cursorX.set(vx);
       cursorY.set(vy);
 
-      // Finger-count gesture menu. fingerCount INCLUDES the thumb when it's
-      // out (pinch tucks it in), so subtract thumbOut to get raised fingers:
+      // Tool gestures ignore the thumb because it is also the pinch finger,
+      // while a true 5-finger open palm is reserved for the command wheel:
       //   2 (index+middle) = color palette, 3 = shape picker, 4 = eraser
       //   toggle, 5 (open palm) = main menu popup.
-      // Hold for GESTURE_HOLD_FRAMES to fire; cooldown stops re-trigger while
-      // the hand is still in the pose.
-      if (frame.detected && stateRef.current === 'DRAWING' && !calModeRef.current) {
-        const raised = frame.fingerCount - (frame.thumbOut ? 1 : 0);
-        // Only count 2 when it is specifically index+middle (twoFingers);
-        // any other 2-finger combo is ambiguous and should not trigger.
-        const count = raised === 2 ? (frame.twoFingers ? 2 : 0) : raised;
-        if (count >= 2 && count <= 5) {
-          if (count === lastGestureCountRef.current) {
-            gestureFramesRef.current++;
-          } else {
-            lastGestureCountRef.current = count;
-            gestureFramesRef.current = 1;
+      // A short time-based hold avoids false triggers without becoming slower
+      // when CV FPS drops. The detector fires once until the pose changes.
+      if (
+        frame.detected &&
+        stateRef.current === 'DRAWING' &&
+        !calModeRef.current &&
+        !menuOpenRef.current
+      ) {
+        const count = commandFingerCount(frame);
+        const triggeredCount = gestureHoldRef.current.update(count, performance.now());
+        if (triggeredCount) {
+          sound.click();
+          if (triggeredCount === 2) {
+            togglePalette();
+          } else if (triggeredCount === 3) {
+            setShapePickerState(!shapePickerOpenRef.current);
+          } else if (triggeredCount === 4) {
+            const next: ToolId = toolRef.current === 'eraser' ? 'pen' : 'eraser';
+            setToolState(next);
+            setShapeState(null);
+            setBanner(next === 'eraser' ? 'ERASER ON' : 'PEN ON');
+          } else if (triggeredCount === 5) {
+            toggleMenu();
           }
-          if (
-            gestureFramesRef.current === GESTURE_HOLD_FRAMES &&
-            Date.now() > gestureCooldownRef.current
-          ) {
-            gestureCooldownRef.current = Date.now() + GESTURE_COOLDOWN_MS;
-            sound.click();
-            if (count === 2) {
-              togglePalette();
-            } else if (count === 3) {
-              setShapePickerState(!shapePickerOpenRef.current);
-            } else if (count === 4) {
-              const next: ToolId = toolRef.current === 'eraser' ? 'pen' : 'eraser';
-              setToolState(next);
-              setShapeState(null);
-              setBanner(next === 'eraser' ? 'ERASER ON' : 'PEN ON');
-            } else if (count === 5) {
-              toggleMenu();
-            }
-          }
-        } else {
-          gestureFramesRef.current = 0;
-          lastGestureCountRef.current = 0;
         }
       } else {
-        gestureFramesRef.current = 0;
-        lastGestureCountRef.current = 0;
+        gestureHoldRef.current.reset();
       }
 
-      // FPS + debug snapshot (1Hz to avoid per-frame re-renders)
+      // Count processed camera frames; stats are published at the end of the
+      // frame after all loop work has been measured.
       fpsCount++;
-      const now = performance.now();
-      if (now - lastFpsTime >= 1000) {
-        setFps(fpsCount * (1000 / (now - lastFpsTime)));
-        setDebugFrame(frame);
-        fpsCount = 0;
-        lastFpsTime = now;
+      if (isPinchingRef.current !== frame.pinching) {
+        isPinchingRef.current = frame.pinching;
+        setIsPinching(frame.pinching);
       }
-      setIsPinching(frame.pinching);
 
       // State transition: hand appears
       if (stateRef.current === 'READY' && frame.detected) {
@@ -661,13 +881,23 @@ export default function AirCanvas() {
       }
       // Grace period: tolerate brief detection dropouts so the stroke (and
       // paint mode) doesn't flicker off for a lost frame or two.
-      handLostFramesRef.current = frame.detected ? 0 : handLostFramesRef.current + 1;
+      const lostFramesBefore = handLostFramesRef.current;
+      const reacquired = frame.detected && lostFramesBefore > 0;
+      handLostFramesRef.current = frame.detected ? 0 : lostFramesBefore + 1;
       const handLost = handLostFramesRef.current > HAND_LOST_GRACE_FRAMES;
+      if (reacquired && currentStrokeRef.current) {
+        const points = currentStrokeRef.current.points;
+        const lastPoint = points[points.length - 1];
+        if (shouldSplitReacquiredStroke(lostFramesBefore, lastPoint, frame.cursor, MAX_REACQUIRE_JUMP_PX)) {
+          commitCurrentStroke();
+        }
+      }
+      if (handLostFramesRef.current === HAND_LOST_GRACE_FRAMES + 1) {
+        resetHandSmoothing();
+      }
       if (stateRef.current === 'DRAWING' && handLost && currentStrokeRef.current) {
         // Hand truly lost mid-drawing — finish current stroke, stay in DRAWING
-        strokesRef.current.push(currentStrokeRef.current);
-        currentStrokeRef.current = null;
-        setStrokeCount(strokesRef.current.length);
+        commitCurrentStroke();
       }
 
       // Suppress drawing during calibration
@@ -677,11 +907,16 @@ export default function AirCanvas() {
       }
 
       // Suppress drawing while the cursor is over a virtual control
-      const overControl =
-        hitTest(vx, vy) !== null ||
-        hitTestStyle(vx, vy) !== null ||
-        hitTestColor(vx, vy) !== null ||
-        hitTestShape(vx, vy) !== null;
+      const buttonHit = hitTest(vx, vy);
+      const styleHit = hitTestStyle(vx, vy);
+      const colorHit = hitTestColor(vx, vy);
+      const shapeHit = hitTestShape(vx, vy);
+      const cameraPreviewHit = Boolean(cameraPreviewRectRef.current &&
+        vx >= cameraPreviewRectRef.current.left &&
+        vx <= cameraPreviewRectRef.current.right &&
+        vy >= cameraPreviewRectRef.current.top &&
+        vy <= cameraPreviewRectRef.current.bottom);
+      const overControl = buttonHit !== null || styleHit !== null || colorHit !== null || shapeHit !== null || cameraPreviewHit;
 
       // Drawing (only while hand is reliably present and overlays closed)
       if (
@@ -693,19 +928,17 @@ export default function AirCanvas() {
         !paletteOpenRef.current &&
         !shapePickerOpenRef.current
       ) {
-        const ctx = drawing.getCtx();
         if (frame.pinching) {
           pinchReleasedFramesRef.current = 0;
           if (!currentStrokeRef.current) {
             currentStrokeRef.current = {
               points: [frame.cursor],
-              width: toolRef.current === 'eraser' ? eraserWidthRef.current : STROKE_WIDTH,
+              width: toolRef.current === 'eraser' ? eraserWidthRef.current : brushSizeRef.current,
               // Eraser paints white — canvas background is white
               color: toolRef.current === 'eraser' ? '#ffffff' : inkColorRef.current,
               shape: toolRef.current === 'eraser' ? undefined : (activeShapeRef.current ?? undefined),
               tool: toolRef.current,
             };
-            lastDrawnIndexRef.current = 0;
           } else {
             const stroke = currentStrokeRef.current;
             // Deadzone: jitter below PEN_DEADZONE_PX never joins the stroke —
@@ -713,17 +946,7 @@ export default function AirCanvas() {
             const committed = applyPenDeadzone(frame.cursor, stroke.points[stroke.points.length - 1]);
             if (committed) {
               stroke.points.push(committed);
-              if (ctx) {
-                if (stroke.shape) {
-                  // ponytail: full redraw per committed point for live shape
-                  // preview; swap to offscreen ghost layer if strokes grow large
-                  const [cw, ch] = drawing.size();
-                  redrawAll(ctx, [...strokesRef.current, stroke], cw, ch);
-                } else {
-                  drawStrokeSegment(ctx, stroke, lastDrawnIndexRef.current);
-                }
-              }
-              lastDrawnIndexRef.current = stroke.points.length - 1;
+              drawing.renderLive(stroke);
             }
           }
         } else if (currentStrokeRef.current) {
@@ -732,18 +955,13 @@ export default function AirCanvas() {
           // pinch stays released for PINCH_RELEASE_GRACE_FRAMES frames.
           pinchReleasedFramesRef.current++;
           if (pinchReleasedFramesRef.current > PINCH_RELEASE_GRACE_FRAMES) {
-            strokesRef.current.push(currentStrokeRef.current);
-            currentStrokeRef.current = null;
-            pinchReleasedFramesRef.current = 0;
-            setStrokeCount(strokesRef.current.length);
+            commitCurrentStroke();
           }
         }
       } else if (frame.detected && !handLost && currentStrokeRef.current) {
         // Hand present but cursor moved over a control — commit the stroke.
         // (Hand-lost case is handled above after the grace period expires.)
-        strokesRef.current.push(currentStrokeRef.current);
-        currentStrokeRef.current = null;
-        setStrokeCount(strokesRef.current.length);
+        commitCurrentStroke();
       }
       // While hand is briefly lost (within the grace window), the open stroke
       // is NOT committed — drawing resumes the same stroke when the hand
@@ -751,31 +969,93 @@ export default function AirCanvas() {
 
       // Button hover + click (viewport coords vs DOM rects)
       if (frame.detected) {
-        setHoveredButton(hitTest(vx, vy));
-        setHoveredStyle(hitTestStyle(vx, vy));
-        setHoveredColor(hitTestColor(vx, vy));
-        setHoveredShape(hitTestShape(vx, vy));
-        // Rising edge only — prevents re-trigger while holding pinch to draw
-        if (frame.pinching && !prev?.pinching) {
-          handlePinchClick(vx, vy);
+        const brushSliderActive = paletteOpenRef.current && isOverBrushSlider(vx, vy);
+        if (brushSliderActive && frame.pinching) {
+          const rect = brushSliderRectRef.current!;
+          const progress = Math.min(1, Math.max(0, (vx - rect.left) / rect.width));
+          const nextSize = Math.round(
+            MIN_BRUSH_SIZE + progress * (MAX_BRUSH_SIZE - MIN_BRUSH_SIZE)
+          );
+          if (nextSize !== brushSizeRef.current) {
+            brushSizeRef.current = nextSize;
+            setBrushSize(nextSize);
+          }
         }
 
-        // Dwell-to-click: rest the cursor on a control to activate it.
-        // Easier on stage than a precise pinch on a moving target.
-        const dwellId = hitTest(vx, vy) ?? hitTestStyle(vx, vy) ?? hitTestColor(vx, vy) ?? hitTestShape(vx, vy);
-        if (dwellId) {
-          if (dwellRef.current.id !== dwellId) {
-            dwellRef.current = { id: dwellId, since: Date.now() };
-          } else if (Date.now() - dwellRef.current.since >= DWELL_CLICK_MS) {
-            // Infinity sentinel: won't re-fire until the cursor leaves and returns
-            dwellRef.current = { id: dwellId, since: Number.POSITIVE_INFINITY };
-            handlePinchClick(vx, vy);
-          }
-        } else {
-          dwellRef.current = { id: null, since: 0 };
+        if (hoveredButtonRef.current !== buttonHit) {
+          hoveredButtonRef.current = buttonHit;
+          setHoveredButton(buttonHit);
         }
-      } else {
-        dwellRef.current = { id: null, since: 0 };
+        if (hoveredStyleRef.current !== styleHit) {
+          hoveredStyleRef.current = styleHit;
+          setHoveredStyle(styleHit);
+        }
+        if (hoveredColorRef.current !== colorHit) {
+          hoveredColorRef.current = colorHit;
+          setHoveredColor(colorHit);
+        }
+        if (hoveredShapeRef.current !== shapeHit) {
+          hoveredShapeRef.current = shapeHit;
+          setHoveredShape(shapeHit);
+        }
+
+        // While a control is hovered, freeze the click anchor: closing a
+        // pinch folds the index tip toward the thumb, dragging the cursor off
+        // the target right before the click registers.
+        const hoveredNow = buttonHit ?? shapeHit ?? colorHit ?? styleHit ?? (isOverBrushSlider(vx, vy) ? 'BRUSH_SIZE_SLIDER' : null);
+        if (hoveredNow) clickAnchorRef.current = { x: vx, y: vy };
+        if (shouldActivateControl(frame.pinching, prev?.pinching ?? false)) {
+          handlePinchClick(clickAnchorRef.current.x, clickAnchorRef.current.y);
+        }
+
+        // Dwell-to-select: hold the cursor on a control to activate it —
+        // no pinch needed. Leaving the control resets the timer.
+        const dwell = updateDwell(
+          dwellRef.current,
+          brushSliderActive ? null : hoveredNow,
+          performance.now(),
+          DWELL_SELECT_MS
+        );
+        dwellRef.current = dwell.state;
+        const nextDwellProgress = dwell.state.key ? Math.min((performance.now() - dwell.state.since) / DWELL_SELECT_MS, 1) : 0;
+        const roundedDwellProgress = Math.round(nextDwellProgress * 20) / 20;
+        if (dwellProgressRef.current !== roundedDwellProgress) {
+          dwellProgressRef.current = roundedDwellProgress;
+          setDwellProgress(roundedDwellProgress);
+        }
+        if (dwell.activated) {
+          sound.click();
+          handlePinchClick(clickAnchorRef.current.x, clickAnchorRef.current.y);
+        }
+      }
+
+      const loopMs = performance.now() - frameStartedAt;
+      latency.loopTotal += loopMs;
+      latency.loopMax = Math.max(latency.loopMax, loopMs);
+
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        setFps(fpsCount * (1000 / (now - lastFpsTime)));
+        setDebugFrame(frame);
+        const samples = Math.max(1, latency.count);
+        const intervalSamples = Math.max(1, latency.count - 1);
+        setLatencyStats({
+          avgDetectMs: latency.detectTotal / samples,
+          maxDetectMs: latency.detectMax,
+          avgLoopMs: latency.loopTotal / samples,
+          maxLoopMs: latency.loopMax,
+          avgFrameIntervalMs: latency.frameIntervalTotal / intervalSamples,
+          maxFrameIntervalMs: latency.frameIntervalMax,
+        });
+        latency.count = 0;
+        latency.detectTotal = 0;
+        latency.detectMax = 0;
+        latency.loopTotal = 0;
+        latency.loopMax = 0;
+        latency.frameIntervalTotal = 0;
+        latency.frameIntervalMax = 0;
+        fpsCount = 0;
+        lastFpsTime = now;
       }
 
       rafRef.current = requestAnimationFrame(loop);
@@ -788,23 +1068,39 @@ export default function AirCanvas() {
       cancelAnimationFrame(rafRef.current);
       (video?.srcObject as MediaStream | null)?.getTracks().forEach((t) => t.stop());
       landmarkerRef.current?.close();
+      landmarkerRef.current = null;
+      resetHandSmoothing();
     };
-  }, [setState, cursorX, cursorY, hitTest, hitTestStyle, hitTestColor, hitTestShape, handlePinchClick, togglePalette, setShapePickerState, setToolState, setShapeState, toggleMenu, finishCalibration]);
+  }, [bootstrapAttempt, commitCurrentStroke, setState, cursorX, cursorY, hitTest, hitTestStyle, isOverBrushSlider, hitTestColor, hitTestShape, handlePinchClick, togglePalette, setShapePickerState, setToolState, setShapeState, toggleMenu, finishCalibration]);
 
   // ─── Cursor visual state ────────────────────────────────────────────────────
 
   const cursorState: CursorState =
-    hoveredButton || hoveredStyle || hoveredColor ? 'hover' : isPinching ? 'pinch' : 'normal';
+    hoveredButton || hoveredStyle || hoveredColor || hoveredShape
+      ? 'hover'
+      : isPinching
+        ? 'pinch'
+        : 'normal';
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden bg-[#050510]">
+    <div className="relative flex h-screen w-screen overflow-hidden bg-[#050510]">
       {/* Hidden video element for MediaPipe */}
       <video ref={videoRef} autoPlay playsInline muted className="hidden" />
 
-      {/* Drawing canvas */}
-      <DrawingCanvas ref={drawingRef} />
+      {/* Left rail: gesture guide — canvas gets its own column, never overlapped */}
+      {(appState === 'READY' || appState === 'DRAWING') && (
+        <GestureGuide
+          pinching={isPinching}
+          tool={tool}
+          activeShape={activeShape}
+          inkColor={inkColor}
+        />
+      )}
+
+      {/* Drawing canvas — center column, flexes to fill */}
+      <DrawingCanvas ref={drawingRef} onResize={handleCanvasResize} />
 
       {/* Controls — everything hidden except the tool badge; menu is a
           5-finger popup so the canvas stays free of buttons while drawing */}
@@ -814,7 +1110,9 @@ export default function AirCanvas() {
             <ColorPicker
               selected={inkColor}
               hovered={hoveredColor}
+              brushSize={brushSize}
               registerRect={(color, rect) => { colorRectsRef.current[color] = rect; }}
+              registerBrushSliderRect={(rect) => { brushSliderRectRef.current = rect; }}
             />
           )}
           {shapePickerOpen && (
@@ -837,12 +1135,17 @@ export default function AirCanvas() {
               selectedStyle={selectedStyle}
               clearConfirming={clearConfirming}
               undoConfirming={undoConfirming}
-              generateDisabled={strokeCount === 0}
+              generateDisabled={strokeCount === 0 || !voicePrompt}
               onUndo={() => triggerUndo()}
               onClear={() => triggerClear()}
               onGenerate={() => {
                 setMenuState(false);
                 triggerGenerate();
+              }}
+              onSelectStyle={(style) => {
+                setSelectedStyle(style);
+                selectedStyleRef.current = style;
+                sound.click();
               }}
               onClose={() => setMenuState(false)}
               registerRect={(id, rect) => { buttonRectsRef.current[id] = rect; }}
@@ -873,7 +1176,9 @@ export default function AirCanvas() {
             </div>
             <div className="text-4xl text-slate-600">→</div>
             <div className="text-center">
-              <p className="mb-3 text-sm tracking-[0.3em] text-cyan-300">AI CREATION</p>
+              <p className="mb-3 text-sm tracking-[0.3em] text-cyan-300">
+                {resultEngine === 'qwen' ? 'QWEN AI CREATION' : 'AI STATUS UNKNOWN'}
+              </p>
               {resultUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={resultUrl} alt="AI generated" className="h-[270px] w-[360px] rounded-xl object-cover" />
@@ -882,6 +1187,12 @@ export default function AirCanvas() {
               )}
             </div>
           </div>
+          {voicePrompt && (
+            <p className="max-w-4xl text-center text-sm tracking-[0.16em] text-slate-300">
+              SPOKEN PROMPT: {voicePrompt}
+              {selectedStyle && <span className="ml-6 text-cyan-300">STYLE: {selectedStyle}</span>}
+            </p>
+          )}
           <button
             onClick={triggerReset}
             className="mt-4 rounded-2xl bg-white/10 px-12 py-5 text-2xl font-bold tracking-widest text-white ring-1 ring-white/20 transition hover:bg-white/20"
@@ -900,27 +1211,31 @@ export default function AirCanvas() {
       )}
 
       {/* Cursor */}
-      <HandCursor x={cursorX} y={cursorY} state={cursorState} color={inkColor} />
+      <HandCursor x={cursorX} y={cursorY} state={cursorState} color={inkColor} dwellProgress={dwellProgress} />
 
       {/* Status */}
       <StatusBanner state={appState} custom={banner} />
 
       {/* Debug */}
       {debugOn && (
-        <DebugPanel fps={fps} frame={debugFrame} state={appState} strokeCount={strokeCount} />
+        <DebugPanel
+          fps={fps}
+          frame={debugFrame}
+          state={appState}
+          strokeCount={strokeCount}
+          latency={latencyStats}
+        />
       )}
 
-      {/* Camera preview pip */}
-      {cameraPreviewOn && appState !== 'RESULT' && <CameraPreview stream={cameraStream} />}
-
-      {/* Voice status badge */}
-      {voiceOn && (
-        <div className="pointer-events-none absolute right-5 top-5 z-40 flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold tracking-wider text-white ring-1 ring-white/20">
-          <span
-            className={`h-2.5 w-2.5 rounded-full ${voiceListening ? 'animate-pulse bg-emerald-400' : 'bg-red-400'}`}
-          />
-          {voiceListening ? 'LISTENING' : 'MIC OFF'}
-        </div>
+      {/* Right rail: voice monitor + camera pip — its own column, never covers canvas */}
+      {cameraPreviewOn && appState !== 'RESULT' && (
+        <CameraPreview
+          stream={cameraStream}
+          onRect={registerCameraPreviewRect}
+          voiceStatus={voiceStatus}
+          voiceTranscript={voiceTranscript}
+          voicePrompt={voicePrompt}
+        />
       )}
     </div>
   );

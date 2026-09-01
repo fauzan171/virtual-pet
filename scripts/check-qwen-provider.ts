@@ -21,6 +21,9 @@ const png = Buffer.from(
   'base64'
 );
 
-const { imageUrl } = await generateImage(png, { style: 'CINEMATIC' });
+const { imageUrl } = await generateImage(png, {
+  style: 'CINEMATIC',
+  prompt: 'A single red sphere centered in the composition',
+});
 if (!/^https?:\/\//.test(imageUrl)) throw new Error(`FAIL: bad imageUrl: ${imageUrl.slice(0, 80)}`);
 console.log('PASS: image generated →', imageUrl.slice(0, 100) + '...');

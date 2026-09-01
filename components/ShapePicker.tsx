@@ -21,14 +21,14 @@ interface Props {
 
 /**
  * Shape palette shown centered on the canvas. Opened with the three-finger
- * gesture (index + middle + ring extended). Hover + pinch or dwell selects.
+ * gesture (index + middle + ring extended). Hover + pinch selects.
  * After selection the next pinch-drag draws that shape; release returns to pen.
  */
 export default function ShapePicker({ selected, hovered, registerRect }: Props) {
   return (
     <div className="absolute left-1/2 top-1/2 z-30 -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-[#050510]/80 p-8 backdrop-blur-md ring-1 ring-white/20">
       <p className="mb-5 text-center text-sm tracking-[0.25em] text-slate-300">
-        PICK A SHAPE ✦ THREE FINGERS TO CLOSE
+        PICK A SHAPE ✦ AIM + HOLD TO SELECT ✦ THREE FINGERS TO CLOSE
       </p>
       <div className="flex items-center gap-6">
         {SHAPES.map((shape) => {

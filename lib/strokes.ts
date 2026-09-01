@@ -94,6 +94,18 @@ export function redrawAll(
   }
 }
 
+/** Render only the growing stroke on a transparent overlay canvas. */
+export function renderLiveStroke(
+  ctx: CanvasRenderingContext2D,
+  stroke: Stroke,
+  w: number,
+  h: number
+): void {
+  ctx.clearRect(0, 0, w, h);
+  if (stroke.shape) drawShape(ctx, stroke);
+  else drawStrokeSegment(ctx, stroke, 1);
+}
+
 /** Export canvas as PNG blob with white background baked in. */
 export function exportPng(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {

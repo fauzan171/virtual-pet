@@ -31,7 +31,7 @@ export default function CalibrationOverlay({ phase, progress, onCancel }: Props)
       ) : (
         <div className="flex flex-col items-center gap-6 text-center">
           <p className="max-w-2xl text-2xl leading-relaxed text-slate-200">
-            Pinch your thumb and index finger together, then release. Repeat 5 times.
+            Pinch your thumb and index finger together, then release repeatedly for 6 seconds.
           </p>
           <div className="text-6xl">🤏</div>
         </div>

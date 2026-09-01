@@ -16,8 +16,8 @@ npm run dev
 Open http://localhost:3000, allow camera access, show your hand.
 
 - **Hand tracking** runs fully in the browser (MediaPipe Hand Landmarker). The webcam feed never leaves the machine.
-- **Only the sketch PNG** is sent to the backend on GENERATE.
-- Without API credentials the app runs in **mock mode** (echoes the sketch back) so the full flow is testable offline.
+- The microphone is captured only after pressing **M**. Audio is converted locally to 16 kHz mono WAV and sent to the server for Qwen transcription; it is not persisted by the app.
+- Generation is **Qwen-only and fail-closed**. Missing credentials or provider failures are shown as errors instead of returning a mock or unrelated fallback image.
 
 ## Enable real AI generation
 
@@ -27,6 +27,8 @@ Copy `.env.local.example` to `.env.local` and fill in:
 QWEN_API_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1
 QWEN_API_KEY=...
 QWEN_MODEL=qwen-image-3.0-pro
+QWEN_ASR_MODEL=qwen-audio-3.0-realtime-plus
+QWEN_PROMPT_MODEL=qwen3.7-plus
 ```
 
 Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` (OpenAI-compatible mode, DashScope-native content items) — verified against the live endpoint, re-verify with `npm run check:qwen`.
@@ -45,22 +47,21 @@ Keys stay server-side only. Request shape lives in `lib/qwen-provider.ts` (OpenA
 | `S` | Sound on/off |
 | `V` | Toggle color palette |
 | `B` | Calibration mode (hand range + pinch threshold) |
-| `M` | Voice commands on/off |
+| `M` | Capture a spoken image prompt (auto-stops after silence; press again to cancel) |
 
-## Voice commands (press `M`)
+## Spoken image prompt (press `M`)
 
-Runs fully in the browser via the Web Speech API (Chrome/Edge). Say:
+Press `M` once, speak the desired image, then pause. Recording stops automatically after silence. The on-screen prompt badge shows the final text; press `M` again to replace it. GENERATE remains disabled until both a sketch and a confirmed visible prompt exist.
 
-| Command | Effect |
-|---|---|
-| `generate [something]` | Start generation; text after "generate" becomes the subject hint for the free engine |
-| `undo` | Undo last stroke |
-| `clear` then `confirm` | Clear canvas (two-step) |
-| `reset` / `start again` | Back to a fresh canvas |
+The camera panel includes a stage-readable **PROMPT MONITOR**: `HEARD` shows the raw Qwen Audio transcript and `IMAGE PROMPT` shows the agent-corrected text. Pressing GENERATE is the presenter's explicit confirmation; pressing `M` replaces a bad transcript. React escapes displayed transcript text, and the server independently limits and sanitizes prompt input.
 
-Generation agent (`lib/agent.ts`): with `QWEN_API_KEY` the sketch goes to the model (img2img). Without a key, the spoken subject + selected style are sent to Pollinations (free, no key) so the show flow still works end to end.
+The server pipeline is intentionally separated by responsibility:
 
-Spoken subjects pass through a safety layer (`sanitizeSubject` in `lib/voice.ts`) before reaching the image model — STT filler words are stripped, empty/absurd input is rejected. The check is applied again server-side at the API route. Verify with `npm run check:voice-guard`.
+1. `qwen-audio-3.0-realtime-plus` transcribes the 16 kHz PCM audio. The realtime model's audio reply is disabled; only its official input-transcript event is used.
+2. `qwen3.7-plus` corrects likely Indonesian/English ASR errors. It may inspect the sketch only to disambiguate a corrupted subject noun and is explicitly forbidden from copying sketch style or inventing details.
+3. `qwen-image-3.0-pro` receives the sketch PNG, visible spoken prompt text, and selected style as one image-to-image request.
+
+The API key remains server-side throughout. Generation never silently falls back to a different provider.
 
 ## Finger gestures
 
@@ -87,11 +88,14 @@ The cursor runs through a One-Euro Filter (`lib/one-euro.ts`) — the standard f
 
 On top of that, stroke points pass through a **pen deadzone** (`PEN_DEADZONE_PX` in `lib/constants.ts`, applied in `applyPenDeadzone`): movement smaller than the deadzone never joins the stroke, so a held hand draws no wiggle — like a real pen whose tip doesn't slide. Slow deliberate moves accumulate past the deadzone and still register. Verify both with `npm run check:one-euro`.
 
+The filter is regression-tested with post-calibration camera jitter of ±6 px, not only idealized sub-pixel noise. Run `npm run check:pen-stability` to enforce the resting spread, maximum frame step, fast-stroke lag, and slow-stroke precision budgets.
+
 ## Show flow
 
 1. Allow camera → `SHOW YOUR HAND TO BEGIN`
 2. Raise hand → cursor appears, `HAND TRACKING ACTIVE`
 3. Pinch thumb + index to draw, release to stop
-4. Optionally pinch a style chip (REALISTIC / CINEMATIC / FUTURISTIC / 3D)
-5. Pinch **GENERATE ✦** → staged loading → before/after reveal
-6. Pinch **START AGAIN** → canvas resets without page reload
+4. Press `M`, speak the image prompt, and verify the visible prompt badge
+5. Optionally pinch a style chip (REALISTIC / CINEMATIC / FUTURISTIC / 3D)
+6. Pinch **GENERATE ✦** → staged loading → before/after reveal
+7. Pinch **START AGAIN** → canvas and spoken prompt reset without page reload

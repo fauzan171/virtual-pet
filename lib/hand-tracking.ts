@@ -72,6 +72,11 @@ function detectTwoFingers(count: number, lm: NormalizedLandmark[]): boolean {
 const filterX = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
 const filterY = new OneEuroFilter(ONE_EURO_MIN_CUTOFF, ONE_EURO_BETA, ONE_EURO_D_CUTOFF);
 
+export function resetHandSmoothing(): void {
+  filterX.reset();
+  filterY.reset();
+}
+
 /** Create the MediaPipe Hand Landmarker. Falls back GPU -> CPU silently. */
 export async function createHandLandmarker(): Promise<HandLandmarker> {
   const vision = await FilesetResolver.forVisionTasks(WASM_BASE);
@@ -107,9 +112,8 @@ export function extractHandFrame(
 ): HandFrame {
   const landmarks = result.landmarks?.[0];
   if (!landmarks) {
-    // Hand left — reset so re-acquire doesn't interpolate a giant jump
-    filterX.reset();
-    filterY.reset();
+    // Keep filter history during brief dropouts. The frame loop resets it only
+    // after the hand-loss grace window truly expires.
     return {
       detected: false,
       cursor: prev?.cursor ?? { x: canvasW / 2, y: canvasH / 2 },

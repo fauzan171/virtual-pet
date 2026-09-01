@@ -22,7 +22,7 @@ export default function StatusBanner({
   if (!message) return null;
   return (
     <div className="pointer-events-none absolute top-8 left-1/2 z-30 -translate-x-1/2">
-      <p className="rounded-full bg-black/40 px-8 py-3 text-xl font-semibold tracking-[0.2em] text-white/90 backdrop-blur">
+      <p role="status" aria-live="polite" className="rounded-full bg-black/40 px-8 py-3 text-xl font-semibold tracking-[0.2em] text-white/90 backdrop-blur">
         {message}
       </p>
     </div>

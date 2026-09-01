@@ -1,4 +1,6 @@
-export const CAMERA = { width: 1280, height: 720 };
+// Hand landmarks do not need HD camera input. 480x360 cuts MediaPipe input
+// work while the drawing canvas stays full-res.
+export const CAMERA = { width: 480, height: 360 };
 
 // One-Euro Filter (pixel space). mincutoff = stillness: lower = steadier at
 // rest. beta = speed responsiveness: higher = less lag on fast sweeps.
@@ -6,13 +8,18 @@ export const CAMERA = { width: 1280, height: 720 };
 // stays LOW during motion so hand tremor is smoothed out of strokes.
 // Previously beta was 0.12 — cutoff spiked during movement and the filter
 // passed tremor straight through, making strokes shaky.
-export const ONE_EURO_MIN_CUTOFF = 0.5;
-export const ONE_EURO_BETA = 0.04;
+// Tuned against post-calibration MediaPipe jitter (±6 px), not idealized
+// sub-pixel noise. The lower beta keeps a resting pen physically planted;
+// deliberate fast strokes still remain below the 20 px lag budget.
+export const ONE_EURO_MIN_CUTOFF = 0.3;
+export const ONE_EURO_BETA = 0.015;
 export const ONE_EURO_D_CUTOFF = 1.0;
 
 // Minimum cursor travel before a point joins the live stroke. Swallows the
 // ~1-2px of residual tracking jitter so a held hand draws no wiggle — like
 // a real pen whose tip doesn't slide while the hand holds position.
+// Keep tiny camera jitter out, but retain small bends so freehand strokes feel
+// like ink instead of long straight chords between sparse points.
 export const PEN_DEADZONE_PX = 3.0;
 
 // Center fraction of camera frame mapped to full canvas
@@ -33,30 +40,36 @@ export const PINCH_RELEASE_GRACE_FRAMES = 8;
 export const BUTTON_DEBOUNCE_MS = 500;
 export const CLEAR_CONFIRM_TIMEOUT_MS = 3000;
 
-// Multi-finger gesture menu: hold N fingers for HOLD_FRAMES to trigger.
-// 3 = shape picker, 4 = eraser toggle, 5 = undo. Thumb excluded (pinch finger).
-export const GESTURE_HOLD_FRAMES = 8;
-export const GESTURE_COOLDOWN_MS = 1200;
+// Multi-finger gestures use a short time-based hold so their latency remains
+// stable even if CV frame rate dips. 5 = open the command wheel.
+export const GESTURE_HOLD_MS = 160;
 
-// Dwell-to-click: hover cursor on a control for this long to activate.
-// Easier on stage than a precise pinch on a moving target.
-export const DWELL_CLICK_MS = 700;
+// Dwell-to-select: aiming at a menu node for this long activates it — no
+// pinch required. Long enough that sweeping past a node never fires; short
+// enough to feel responsive on stage.
+export const DWELL_SELECT_MS = 900;
 
 // Frames of lost tracking tolerated before committing the open stroke.
 // Long enough (~1s at 30fps) to ride out brief detection dropouts while
 // drawing fast or when the hand briefly occludes itself.
 export const HAND_LOST_GRACE_FRAMES = 30;
 
+// A short tracking dropout may resume the same stroke, but never bridge a
+// large re-acquisition jump with a diagonal line across the canvas.
+export const MAX_REACQUIRE_JUMP_PX = 80;
+
 // Extra pixels added around every virtual button for hit-testing
-export const BUTTON_HIT_PAD = 30;
+export const BUTTON_HIT_PAD = 10;
 
 export const MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 export const WASM_BASE =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm';
+  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm';
 
 export const INK = '#1a1a2e';
-export const STROKE_WIDTH = 5;
+export const STROKE_WIDTH = 6;
+export const MIN_BRUSH_SIZE = 2;
+export const MAX_BRUSH_SIZE = 24;
 
 // Palette for the on-stage color picker (INK first = default).
 // No white — canvas is white, stroke would vanish.

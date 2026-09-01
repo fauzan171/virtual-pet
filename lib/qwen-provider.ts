@@ -9,44 +9,55 @@
  */
 
 import { DEFAULT_PROMPT, STYLES, type StyleKey } from './prompt.ts';
+import { isTrustedQwenBaseUrl, trustedQwenBaseUrl } from './qwen-config.ts';
 
 export interface GenerateOptions {
   style?: string;
+  prompt: string;
+  signal?: AbortSignal;
 }
 
 export interface GenerateResult {
   imageUrl: string; // data URL or http(s) URL
 }
 
-function buildPrompt(style?: string): string {
+export function buildPrompt(style?: string, spokenPrompt?: string): string {
   const desc = style && style in STYLES ? STYLES[style as StyleKey] : null;
-  const styleLine = desc ? `\n\nApply this visual style: ${desc}.` : '';
-  return DEFAULT_PROMPT + styleLine;
+  const intentLine = spokenPrompt?.trim()
+    ? `\n\nSPOKEN USER PROMPT\n${spokenPrompt.trim()}`
+    : '';
+  const styleLine = desc
+    ? `\n\nSELECTED VISUAL STYLE\nApply this style after understanding the sketch: ${desc}. Preserve every structural constraint above.`
+    : '';
+  return DEFAULT_PROMPT + intentLine + styleLine;
 }
 
 /**
- * Returns true when the provider is configured via env vars.
- * The route falls back to mock mode when this is false.
+ * Returns true only when credentials and a trusted Alibaba gateway are set.
+ * The route fails closed when this is false.
  */
 export function isConfigured(): boolean {
-  return Boolean(process.env.QWEN_API_KEY && process.env.QWEN_API_URL);
+  return Boolean(process.env.QWEN_API_KEY && isTrustedQwenBaseUrl(process.env.QWEN_API_URL));
 }
 
 export async function generateImage(
   sketchPng: Buffer,
-  options: GenerateOptions = {}
+  options: GenerateOptions
 ): Promise<GenerateResult> {
-  const baseUrl = process.env.QWEN_API_URL;
+  const baseUrl = trustedQwenBaseUrl(process.env.QWEN_API_URL);
   const apiKey = process.env.QWEN_API_KEY;
   const model = process.env.QWEN_MODEL ?? 'qwen-image-3.0-pro';
-  if (!baseUrl || !apiKey) throw new Error('Provider not configured');
+  if (!apiKey) throw new Error('Provider not configured');
 
   const dataUrl = `data:image/png;base64,${sketchPng.toString('base64')}`;
-  const prompt = buildPrompt(options.style);
+  const prompt = buildPrompt(options.style, options.prompt);
 
   const controller = new AbortController();
-  // ponytail: image gen observed at 20-90s; raise if larger resolutions land
-  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const abortFromCaller = () => controller.abort();
+  options.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  // Stage-size image-to-image calls can exceed three minutes under provider load.
+  // Keep a hard ceiling, but allow enough room for a real 1024×768 sketch.
+  const timeout = setTimeout(() => controller.abort(), 300_000);
 
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -57,6 +68,13 @@ export async function generateImage(
       },
       body: JSON.stringify({
         model,
+        // Stage mode favors predictable 1K output and skips two optional
+        // preprocessing/reasoning passes. The Pro image model and the full
+        // sketch-to-image prompt remain unchanged.
+        size: '1024*1024',
+        n: 1,
+        prompt_extend: false,
+        enable_thinking: false,
         messages: [
           {
             role: 'user',
@@ -68,8 +86,7 @@ export async function generateImage(
     });
 
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`Provider HTTP ${res.status}: ${text.slice(0, 200)}`);
+      throw new Error(`Provider HTTP ${res.status}`);
     }
 
     const data = await res.json();
@@ -78,6 +95,7 @@ export async function generateImage(
     return { imageUrl };
   } finally {
     clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -90,12 +108,22 @@ interface ProviderShape {
   data?: { url?: string }[];
 }
 
-function extractImageUrl(data: unknown): string | null {
+export function extractImageUrl(data: unknown): string | null {
   const d = data as ProviderShape;
-  return (
+  const imageUrl = (
     d?.output?.choices?.[0]?.message?.content?.find((c) => c.image)?.image ??
     d?.choices?.[0]?.message?.content?.find((c) => c.image)?.image ??
     d?.data?.[0]?.url ??
     null
   );
+  if (typeof imageUrl !== 'string') return null;
+  if (/^data:image\/(?:png|jpeg|webp);base64,/.test(imageUrl)) {
+    return imageUrl.length <= 15 * 1024 * 1024 ? imageUrl : null;
+  }
+  try {
+    const url = new URL(imageUrl);
+    return url.protocol === 'https:' && url.hostname.endsWith('.aliyuncs.com') ? imageUrl : null;
+  } catch {
+    return null;
+  }
 }

@@ -1,14 +1,24 @@
 {
   "name": "holopet-cv",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
+    "check:gestures": "node --experimental-strip-types scripts/check-gestures.ts",
+    "check:frame-loop": "node --experimental-strip-types scripts/check-frame-loop.ts",
+    "check:control-selection": "node --experimental-strip-types scripts/check-control-selection.ts",
+    "check:stroke-quality": "node --experimental-strip-types scripts/check-stroke-quality.ts",
     "check:one-euro": "node --experimental-strip-types scripts/check-one-euro.ts",
+    "check:pen-stability": "node --experimental-strip-types scripts/check-pen-stability.ts",
     "check:voice-guard": "node --experimental-strip-types scripts/check-voice-guard.ts",
+    "check:agent-fallback": "node --experimental-strip-types scripts/check-agent-fallback.ts",
+    "check:stage-reliability": "node --experimental-strip-types scripts/check-stage-reliability.ts",
+    "check:prompt-contract": "node --experimental-strip-types scripts/check-prompt-contract.ts",
+    "check:qwen-themes": "node --experimental-strip-types scripts/check-qwen-themes.ts",
     "check:qwen": "node --experimental-strip-types scripts/check-qwen-provider.ts"
   },
   "dependencies": {
@@ -16,13 +26,15 @@
     "framer-motion": "^13.1.0",
     "next": "16.3.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",
