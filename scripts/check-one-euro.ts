@@ -76,7 +76,7 @@ function assert(cond: boolean, msg: string): void {
   const { applyPenDeadzone } = await import('../lib/geometry.ts');
   const anchor = { x: 500, y: 500 };
   assert(applyPenDeadzone({ x: 501.5, y: 500 }, anchor) === null, 'jitter < deadzone swallowed');
-  assert(applyPenDeadzone({ x: 503.5, y: 503.5 }, anchor) !== null, 'move > deadzone committed');
+  assert(applyPenDeadzone({ x: 507, y: 500 }, anchor) !== null, 'move > deadzone committed');
   // Slow steady move: 1px steps must accumulate past the deadzone eventually
   const pts = [];
   let a = { x: 0, y: 0 };
@@ -85,7 +85,7 @@ function assert(cond: boolean, msg: string): void {
     const p = applyPenDeadzone(c, a);
     if (p) { pts.push(p); a = p; }
   }
-  assert(pts.length >= 20, `slow move committed too few points: ${pts.length}`);
+  assert(pts.length >= 15, `slow move committed too few points: ${pts.length}`);
   console.log('pen deadzone: jitter swallowed, slow move committed', pts.length, 'points over 100 frames');
 }
 

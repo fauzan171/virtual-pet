@@ -11,7 +11,7 @@ export const CAMERA = { width: 480, height: 360 };
 // Tuned against post-calibration MediaPipe jitter (±6 px), not idealized
 // sub-pixel noise. The lower beta keeps a resting pen physically planted;
 // deliberate fast strokes still remain below the 20 px lag budget.
-export const ONE_EURO_MIN_CUTOFF = 0.3;
+export const ONE_EURO_MIN_CUTOFF = 0.18;
 export const ONE_EURO_BETA = 0.015;
 export const ONE_EURO_D_CUTOFF = 1.0;
 
@@ -20,7 +20,7 @@ export const ONE_EURO_D_CUTOFF = 1.0;
 // a real pen whose tip doesn't slide while the hand holds position.
 // Keep tiny camera jitter out, but retain small bends so freehand strokes feel
 // like ink instead of long straight chords between sparse points.
-export const PEN_DEADZONE_PX = 3.0;
+export const PEN_DEADZONE_PX = 6.0;
 
 // Center fraction of camera frame mapped to full canvas
 export const REGION = 0.75;

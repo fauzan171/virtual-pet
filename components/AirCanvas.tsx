@@ -193,6 +193,7 @@ export default function AirCanvas() {
   const landmarkerRef = useRef<Awaited<ReturnType<typeof createHandLandmarker>> | null>(null);
   const rafRef = useRef(0);
   const lastVideoTimeRef = useRef(-1);
+  const lastDetectTsRef = useRef(0);
   const latencyRef = useRef({
     count: 0,
     detectTotal: 0,
@@ -789,7 +790,12 @@ export default function AirCanvas() {
       const [cw, ch] = drawing.size();
       const canvasRect = drawing.rect();
       const detectStartedAt = performance.now();
-      const result = landmarker.detectForVideo(video, detectStartedAt);
+      // MediaPipe requires strictly increasing timestamps — two rAF frames can
+      // land on the same ms and its WASM throws "divide by zero" on a delta
+      // of zero. Force monotonicity.
+      const detectTs = Math.max(detectStartedAt, lastDetectTsRef.current + 1);
+      lastDetectTsRef.current = detectTs;
+      const result = landmarker.detectForVideo(video, detectTs);
       const detectMs = performance.now() - detectStartedAt;
       latency.count++;
       latency.detectTotal += detectMs;
@@ -1193,6 +1199,43 @@ export default function AirCanvas() {
               {selectedStyle && <span className="ml-6 text-cyan-300">STYLE: {selectedStyle}</span>}
             </p>
           )}
+          <div className="flex gap-6">
+            {sketchUrl && (
+              <a
+                href={sketchUrl}
+                download="holopet-sketch.png"
+                className="rounded-2xl bg-white/10 px-8 py-4 text-lg font-bold tracking-widest text-white ring-1 ring-white/20 transition hover:bg-white/20"
+              >
+                ⬇ SKETCH
+              </a>
+            )}
+            {resultUrl && (
+              <a
+                href={resultUrl}
+                download="holopet-ai.png"
+                onClick={(e) => {
+                  // data: URLs download natively; remote OSS URLs get
+                  // fetched to a blob first so the browser saves a file
+                  // instead of navigating away from the result screen.
+                  if (resultUrl.startsWith('data:')) return;
+                  e.preventDefault();
+                  fetch(resultUrl)
+                    .then((r) => r.blob())
+                    .then((blob) => {
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'holopet-ai.png';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    });
+                }}
+                className="cursor-pointer rounded-2xl bg-cyan-400/20 px-8 py-4 text-lg font-bold tracking-widest text-cyan-200 ring-1 ring-cyan-300/40 transition hover:bg-cyan-400/30"
+              >
+                ⬇ AI IMAGE
+              </a>
+            )}
+          </div>
           <button
             onClick={triggerReset}
             className="mt-4 rounded-2xl bg-white/10 px-12 py-5 text-2xl font-bold tracking-widest text-white ring-1 ring-white/20 transition hover:bg-white/20"
